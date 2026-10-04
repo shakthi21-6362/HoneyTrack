@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+honeytrack.db
+.env
+.env.*
+!.env.example
+ssh_host_key
+ssh_host_key*
+*.pem
+*.key
+*.log
+test_report.pdf
+hackerone_threat_advisory.pdf

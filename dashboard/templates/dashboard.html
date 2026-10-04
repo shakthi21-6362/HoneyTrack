@@ -1,0 +1,558 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0a0a0b">
+  <meta name="description" content="HoneyTrack live attacker activity, geographic origins, and threat intelligence.">
+  <title>Live Dashboard | HoneyTrack</title>
+  <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <link rel="stylesheet" href="/static/css/honeytrack.css?v=3.3">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="" defer></script>
+  <script src="/static/js/honeytrack.js?v=3.3" defer></script>
+  <style>
+    .operator-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font: 600 11px var(--font-mono);
+      letter-spacing: .08em;
+      color: var(--muted);
+      padding: 5px 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+    }
+    .operator-badge span {
+      color: var(--foreground);
+    }
+  </style>
+</head>
+<body class="dashboard-page" data-page="dashboard">
+  <!-- Top Navigation Bar -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="/" aria-label="HoneyTrack dashboard">
+        <span class="brand-mark" aria-hidden="true"><span></span></span>
+        <span>HONEY<span class="brand-accent">TRACK</span></span>
+      </a>
+      
+      <div class="topbar-actions">
+        <span class="mode-badge {% if system_mode == 'PRODUCTION' %}mode-prod{% else %}mode-demo{% endif %}" id="system-mode-badge" title="Active Telemetry Partition">
+          <span class="mode-dot"></span>
+          {% if system_mode == 'PRODUCTION' %}
+            LIVE PRODUCTION
+          {% else %}
+            SIMULATION (DEMO)
+          {% endif %}
+        </span>
+        <span class="topbar-divider" aria-hidden="true"></span>
+        <span class="live-status">
+          <span class="live-dot" aria-hidden="true"></span>
+          LIVE MONITORING
+        </span>
+        <span class="topbar-divider" aria-hidden="true"></span>
+        <a class="btn-pdf" id="btn-top-pdf" href="/api/reports/pdf" title="Download Threat Intelligence PDF Report">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          PDF REPORT
+        </a>
+        <button class="btn-email-alert" id="btn-email-modal-toggle" type="button" title="Configure & Test Threat Email Alerts">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+            <polyline points="22,6 12,13 2,6"></polyline>
+          </svg>
+          EMAIL ALERTS
+        </button>
+        <button class="btn-email-alert" id="btn-fed-modal-toggle" type="button" title="View Distributed Sensor Network & Threat Mesh">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="18" cy="5" r="3"></circle>
+            <circle cx="6" cy="12" r="3"></circle>
+            <circle cx="18" cy="19" r="3"></circle>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+          </svg>
+          FEDERATION
+        </button>
+        <span class="topbar-divider" aria-hidden="true"></span>
+        <div class="operator-badge" title="{{ user_email | default('') }}">
+          OP: <span>{{ user_name | default('GHOST') }}</span>
+        </div>
+        <span class="topbar-divider" aria-hidden="true"></span>
+        <a class="logout-button" href="/logout" title="Disconnect Session">
+          Logout 
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M9 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4m5-4 4-4-4-4m4 4H9"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="dashboard-container">
+    <!-- Page Heading -->
+    <div class="page-heading">
+      <div>
+        <p class="eyebrow"><span class="eyebrow-line"></span>THREAT INTELLIGENCE / OVERVIEW</p>
+        <h1>LIVE ACTIVITY</h1>
+        <p>Real-time visibility into honeypot interactions worldwide.</p>
+      </div>
+      <div class="page-heading-meta">
+        <span class="meta-label">MONITORING STATUS</span>
+        <span class="meta-value">
+          <span class="status-dot"></span>ALL SENSORS ONLINE (SSH · HTTP · FTP)
+        </span>
+      </div>
+    </div>
+
+    <!-- 4 Stats Cards -->
+    <section class="stats-grid" aria-label="Attack statistics">
+      <article class="stat-card enter-card">
+        <div class="stat-top">
+          <span>TOTAL ATTACKS</span>
+          <span class="stat-index">01 / 04</span>
+        </div>
+        <strong id="total-attacks" class="stat-number">0</strong>
+        <span class="stat-bottom">Recorded interactions</span>
+      </article>
+
+      <article class="stat-card enter-card">
+        <div class="stat-top">
+          <span>UNIQUE IPS</span>
+          <span class="stat-index">02 / 04</span>
+        </div>
+        <strong id="unique-ips" class="stat-number">0</strong>
+        <span class="stat-bottom">Distinct sources detected</span>
+      </article>
+
+      <article class="stat-card enter-card">
+        <div class="stat-top">
+          <span>COUNTRIES</span>
+          <span class="stat-index">03 / 04</span>
+        </div>
+        <strong id="countries" class="stat-number">0</strong>
+        <span class="stat-bottom">Geographic origins</span>
+      </article>
+
+      <article class="stat-card stat-last enter-card">
+        <div class="stat-top">
+          <span>LAST ATTACK</span>
+          <span class="stat-index">04 / 04</span>
+        </div>
+        <strong id="last-location" class="stat-location">—</strong>
+        <span id="last-time" class="stat-bottom">—</span>
+      </article>
+    </section>
+
+    <!-- Global Threat Mesh & Federated Nodes Live Monitoring Bar -->
+    <section class="fed-overview-bar enter-card" aria-label="Federated sensors monitoring bar" style="margin-bottom: 24px; background: #0b1120; border: 1px solid #1e293b; border-radius: 8px; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px;">
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <span style="display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 6px; background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;">
+            <circle cx="18" cy="5" r="3"></circle>
+            <circle cx="6" cy="12" r="3"></circle>
+            <circle cx="18" cy="19" r="3"></circle>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+          </svg>
+        </span>
+        <div>
+          <div style="font-family: var(--font-mono); font-size: 10px; color: #64748b; font-weight: 700; letter-spacing: 0.08em;">GLOBAL SENSOR MESH MONITOR</div>
+          <div style="display: flex; align-items: center; gap: 10px; margin-top: 2px;">
+            <strong id="dash-fed-total-count" style="font-size: 15px; color: #f8fafc; font-family: var(--font-mono);">1 Node Connected</strong>
+            <span style="font-size: 11px; color: #22c55e; font-family: var(--font-mono); display: inline-flex; align-items: center; gap: 5px;">
+              <span class="node-status-dot online" style="margin: 0;"></span> <span id="dash-fed-online-count">1 Active Online</span>
+            </span>
+            <span id="dash-fed-reported-attacks" style="font-size: 11px; color: #94a3b8; font-family: var(--font-mono);">· 0 Remote Attacks Ingested</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Node Pill Badges -->
+      <div id="dash-fed-node-pills" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+        <span class="fed-role-badge hub" style="font-size: 10.5px; padding: 4px 10px;">Primary Hub: Mumbai</span>
+      </div>
+
+      <div>
+        <button type="button" id="btn-dash-open-fed" class="btn-fed-action primary" style="padding: 7px 14px; font-size: 11px; display: inline-flex; align-items: center; gap: 6px;">
+          <span>MANAGE FEDERATION</span>
+          <span style="font-size: 12px;">→</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- Activity Grid: Threat Map & Live Feed -->
+    <section class="activity-grid" aria-label="Live attack activity">
+      <!-- Map Column -->
+      <div class="surface map-surface enter-card">
+        <div class="surface-heading">
+          <div>
+            <h2>ATTACK ORIGINS</h2>
+            <p>Geographic distribution of detected activity</p>
+          </div>
+          <span class="surface-counter">
+            <span class="counter-dot"></span>LIVE MAP
+          </span>
+        </div>
+        <div id="attack-map" class="attack-map" aria-label="Interactive map of attack origins"></div>
+        <div class="map-footer">
+          <span><span class="legend-dot"></span>ATTACK SOURCE</span>
+          <span>SCROLL TO ZOOM <span class="footer-separator">/</span> CLICK MARKER FOR DETAILS</span>
+        </div>
+      </div>
+
+      <!-- Feed Column -->
+      <div class="surface feed-surface enter-card">
+        <div class="surface-heading">
+          <div>
+            <h2>LIVE ATTACK FEED</h2>
+            <p>Most recent events</p>
+          </div>
+          <span class="feed-live-dot" aria-label="Live"></span>
+        </div>
+        <div class="feed-list" id="feed-list" aria-live="polite" aria-relevant="additions"></div>
+        <div class="feed-footer">
+          UPDATING IN REAL TIME <span class="feed-footer-mark">↗</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Event Log Table Section -->
+    <section class="events-section enter-card" aria-labelledby="events-title">
+      <div class="events-heading">
+        <div>
+          <p class="eyebrow"><span class="eyebrow-line"></span>EVENT LOG &amp; AUDIT TRAIL</p>
+          <h2 id="events-title">RAW TELEMETRY ARCHIVE</h2>
+        </div>
+      </div>
+
+      <!-- Advanced Filter Toolbar -->
+      <div class="filter-toolbar">
+        <div class="filter-group">
+          <select id="filter-service" class="filter-select" aria-label="Filter by service">
+            <option value="ALL">All Services</option>
+            <option value="SSH">SSH Honeypot</option>
+            <option value="HTTP">HTTP Honeypot</option>
+            <option value="FTP">FTP Honeypot</option>
+          </select>
+
+          <select id="filter-risk" class="filter-select" aria-label="Filter by risk score">
+            <option value="ALL">All Risk Scores</option>
+            <option value="70">Critical Risk (&gt;= 70)</option>
+            <option value="40">Elevated Risk (&gt;= 40)</option>
+            <option value="LOW">Low Risk (&lt; 40)</option>
+          </select>
+
+          <select id="filter-tor" class="filter-select" aria-label="Filter by Tor exit node">
+            <option value="ALL">All Traffic Types</option>
+            <option value="TOR">Tor Exit Nodes Only</option>
+            <option value="DIRECT">Direct IPs Only</option>
+          </select>
+
+          <button id="btn-reset-filters" class="filter-btn" type="button" title="Reset all filters">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+            RESET
+          </button>
+
+          {% if system_mode == 'PRODUCTION' %}
+          <button id="btn-clear-live" class="btn-clear-live" type="button" title="Clear all live production events and restart counts from 0">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+            CLEAR LIVE
+          </button>
+          {% endif %}
+        </div>
+
+        <div class="filter-group">
+          <div class="search-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="7"/>
+              <path d="m16 16 5 5"/>
+            </svg>
+            <input id="event-search" type="search" placeholder="Search IP, City, ISP, Cmd, User..." aria-label="Search events">
+          </div>
+
+          <button id="btn-table-pdf" class="btn-pdf" type="button" title="Export current filtered view as PDF">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            EXPORT PDF
+          </button>
+        </div>
+      </div>
+
+      <div class="table-scroll">
+        <table class="events-table">
+          <thead>
+            <tr>
+              <th>TIME (UTC)</th>
+              <th>IP ADDRESS</th>
+              <th>LOCATION</th>
+              <th>COORDS (LAT/LON)</th>
+              <th>ISP / NETWORK</th>
+              <th>SERVICE</th>
+              <th>ATTACK TYPE</th>
+              <th>PAYLOAD / CREDS</th>
+              <th>RISK SCORE</th>
+            </tr>
+          </thead>
+          <tbody id="event-rows">
+            <tr><td class="empty-row" colspan="9">Loading events...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="table-footer">
+        <span id="pagination-status">—</span>
+        <div class="pagination">
+          <button class="page-button" id="previous-page" type="button" aria-label="Previous page" disabled>←</button>
+          <span id="page-number">1</span>
+          <button class="page-button" id="next-page" type="button" aria-label="Next page">→</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Dashboard Footer -->
+    <footer class="dashboard-footer">
+      <span>HONEYTRACK <span class="footer-separator">/</span> DEFENSIVE SECURITY INTELLIGENCE SYSTEM</span>
+      <span>ACTIVE DEFENSE · OBSERVATION ONLY.</span>
+    </footer>
+  </main>
+
+  <!-- Attacker Profile Detail Drawer Backdrop -->
+  <div class="panel-backdrop" id="panel-backdrop" hidden></div>
+
+  <!-- Attacker Profile Detail Drawer Panel -->
+  <aside class="detail-panel" id="detail-panel" role="dialog" aria-modal="true" aria-labelledby="detail-title" aria-hidden="true" tabindex="-1">
+    <div class="panel-header">
+      <div>
+        <p class="eyebrow"><span class="eyebrow-line"></span>ATTACKER PROFILE</p>
+        <h2 id="detail-title">SOURCE DETAILS</h2>
+      </div>
+      <button class="panel-close" id="panel-close" type="button" aria-label="Close attacker details">×</button>
+    </div>
+    <div class="panel-body" id="panel-body"></div>
+  </aside>
+
+  <!-- Email Alerts Diagnostic Modal Backdrop -->
+  <div class="email-modal-backdrop" id="email-modal-backdrop" hidden></div>
+
+  <!-- Email Alerts Diagnostic Modal -->
+  <aside class="email-modal" id="email-modal" role="dialog" aria-modal="true" aria-labelledby="email-modal-title" hidden>
+    <div class="email-modal-header">
+      <div>
+        <p class="eyebrow"><span class="eyebrow-line"></span>THREAT NOTIFICATIONS</p>
+        <h2 id="email-modal-title">EMAIL ALERTS &amp; SMTP DIAGNOSTICS</h2>
+      </div>
+      <button class="email-modal-close" id="btn-close-email-modal" type="button" aria-label="Close email alert dialog">&times;</button>
+    </div>
+    <div class="email-modal-body">
+      <div class="smtp-status-card">
+        <div class="smtp-status-row">
+          <span class="smtp-label">SMTP SERVICE:</span>
+          <span class="smtp-val" id="diag-smtp-server">smtp.gmail.com:587 (TLS)</span>
+        </div>
+        <div class="smtp-status-row">
+          <span class="smtp-label">AUTHENTICATED ACCOUNT:</span>
+          <span class="smtp-val highlight" id="diag-smtp-account">shakthin21@gmail.com</span>
+        </div>
+        <div class="smtp-status-row">
+          <span class="smtp-label">DISPATCH THRESHOLD:</span>
+          <span class="smtp-val" id="diag-smtp-threshold">Risk &ge; 70 or Tor Exit Node</span>
+        </div>
+        <div class="smtp-status-row">
+          <span class="smtp-label">PER-IP COOLDOWN:</span>
+          <span class="smtp-val" id="diag-smtp-cooldown">300 seconds</span>
+        </div>
+      </div>
+
+      <div class="email-test-form">
+        <label for="diag-recipient-email" class="email-form-label">OPERATOR ALERT RECIPIENT</label>
+        <div class="email-input-group">
+          <input type="email" id="diag-recipient-email" class="email-input" value="{{ user_email | default('shakthin21@gmail.com') }}" placeholder="operator@example.com" required>
+          <button type="button" id="btn-send-test-email" class="btn-send-test">
+            <span class="btn-spinner" id="email-spinner" hidden></span>
+            <span class="btn-label" id="btn-email-text">SEND TEST ALERT</span>
+          </button>
+        </div>
+        <p class="email-form-hint">Dispatches an immediate high-severity threat notification email via Gmail SMTP to verify end-to-end delivery.</p>
+      </div>
+
+      <div class="email-test-result" id="email-test-result" hidden>
+        <div class="result-badge" id="result-status-badge">SUCCESS</div>
+        <p class="result-message" id="result-status-text"></p>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Terminal Session Replay Modal Backdrop -->
+  <div class="replay-modal-backdrop" id="replay-modal-backdrop" hidden></div>
+
+  <!-- Terminal Session Replay Modal -->
+  <aside class="replay-modal" id="replay-modal" role="dialog" aria-modal="true" aria-labelledby="replay-modal-title" hidden>
+    <div class="replay-modal-header">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span class="term-dot red"></span>
+        <span class="term-dot yellow"></span>
+        <span class="term-dot green"></span>
+        <span id="replay-modal-title" class="term-title">TERMINAL SESSION REPLAY // HONEYPOT TTY</span>
+      </div>
+      <button class="email-modal-close" id="btn-close-replay-modal" type="button" aria-label="Close terminal replay">&times;</button>
+    </div>
+    
+    <div class="replay-toolbar">
+      <div class="replay-selector-group">
+        <label for="replay-session-select" class="replay-label">SELECT SESSION:</label>
+        <select id="replay-session-select" class="replay-dropdown">
+          <option value="">Loading sessions...</option>
+        </select>
+      </div>
+      <div class="replay-controls">
+        <button type="button" id="btn-replay-play" class="replay-ctrl-btn">▶ PLAY</button>
+        <button type="button" id="btn-replay-restart" class="replay-ctrl-btn">↺ RESTART</button>
+        <div class="speed-toggle">
+          <button type="button" class="speed-btn active" data-speed="1">1x</button>
+          <button type="button" class="speed-btn" data-speed="2">2x</button>
+          <button type="button" class="speed-btn" data-speed="4">4x</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="terminal-screen" id="terminal-screen">
+      <span id="terminal-output"></span><span class="terminal-cursor"></span>
+    </div>
+
+    <div class="replay-footer">
+      <div class="replay-meta-tags">
+        <span id="replay-meta-ip" class="term-tag">IP: —</span>
+        <span id="replay-meta-user" class="term-tag">USER: —</span>
+        <span id="replay-meta-cmds" class="term-tag">CMDS: —</span>
+      </div>
+      <div class="replay-timeline">
+        <span id="replay-timer" class="term-timer">00:00 / 00:00</span>
+        <div class="timeline-bar">
+          <div class="timeline-fill" id="replay-timeline-fill" style="width: 0%"></div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Distributed Federation Network Modal Backdrop -->
+  <div class="fed-modal-backdrop" id="fed-modal-backdrop" hidden></div>
+
+  <!-- Distributed Federation Network Modal -->
+  <aside class="fed-modal" id="fed-modal" role="dialog" aria-modal="true" aria-labelledby="fed-modal-title" hidden>
+    <div class="fed-modal-header">
+      <div>
+        <p class="eyebrow"><span class="eyebrow-line"></span>DISTRIBUTED SENSOR NETWORK (v2.0)</p>
+        <h2 id="fed-modal-title">NODE FEDERATION &amp; GLOBAL THREAT MESH</h2>
+      </div>
+      <button class="email-modal-close" id="btn-close-fed-modal" type="button" aria-label="Close federation dialog">&times;</button>
+    </div>
+
+    <div class="fed-modal-body">
+      <!-- Local Node Info Banner -->
+      <div class="fed-local-card">
+        <div class="fed-local-info">
+          <span class="fed-local-badge">LOCAL SENSOR HUB</span>
+          <strong id="fed-local-name" class="fed-local-title">HoneyTrack Primary Node</strong>
+          <span id="fed-local-region" class="fed-local-region">Region: AP-SOUTH-1 (Mumbai)</span>
+        </div>
+        <div class="fed-local-actions">
+          <button type="button" id="btn-fed-seed-demo" class="btn-fed-action secondary">SEED GLOBAL SENSORS</button>
+          <button type="button" id="btn-fed-sync-now" class="btn-fed-action primary">SYNC THREAT MESH NOW</button>
+        </div>
+      </div>
+
+      <!-- Cross-Node Threat & Attacker Replay Search -->
+      <div class="fed-search-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <h3 class="fed-subheading" style="margin:0;">CROSS-NODE ATTACKER SEARCH &amp; SESSION REPLAY</h3>
+          <span style="font-size:10.5px;color:var(--muted);font-family:var(--font-mono);">LOOKUP ADVERSARY &amp; PLAY TERMINAL RECORDING</span>
+        </div>
+        <div class="fed-search-bar" style="display:flex;gap:10px;">
+          <input type="text" id="fed-ip-search-input" class="fed-input" style="flex:1;" placeholder="Search IP from feed (e.g. 185.220.101.35, 198.51.100.22, 45.155.205.233)...">
+          <button type="button" id="btn-fed-search-ip" class="btn-fed-action primary" style="white-space:nowrap;">SEARCH &amp; REPLAY</button>
+        </div>
+        <div id="fed-search-results" class="fed-search-results" style="margin-top:12px;" hidden></div>
+      </div>
+
+      <!-- Active Sensor Nodes Roster & Management Section -->
+      <div class="fed-roster-card" style="background:#080c14;border:1px solid #1e293b;border-radius:8px;padding:16px 20px;display:flex;flex-direction:column;gap:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #1e293b;padding-bottom:10px;flex-wrap:wrap;gap:8px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#38bdf8;box-shadow:0 0 8px #38bdf8;"></span>
+            <h3 class="fed-subheading" style="margin:0;font-size:12px;color:#f8fafc;">ACTIVE SENSOR NODES ROSTER &amp; MANAGEMENT</h3>
+            <span id="fed-modal-nodes-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:2px 8px;border-radius:10px;font-size:10.5px;font-family:var(--font-mono);font-weight:700;">12 Nodes</span>
+          </div>
+          <div style="font-size:11px;color:#94a3b8;font-family:var(--font-mono);">
+            Click <span style="color:#ef4444;font-weight:700;">REMOVE</span> to disconnect any remote sensor
+          </div>
+        </div>
+
+        <!-- Node Roster Table -->
+        <div class="fed-nodes-table-wrap" style="display:block;width:100%;min-height:180px;max-height:300px;overflow-x:auto;overflow-y:auto;border:1px solid #1e293b;border-radius:6px;background:#050811;">
+          <table class="fed-nodes-table" style="width:100%;border-collapse:collapse;font:500 11.5px var(--font-mono);min-width:620px;">
+            <thead>
+              <tr style="background:#0d131f;">
+                <th style="padding:10px 14px;text-align:left;color:#64748b;font-weight:700;font-size:10px;letter-spacing:.05em;border-bottom:1px solid #1e293b;position:sticky;top:0;z-index:2;background:#0d131f;">NODE / SENSOR</th>
+                <th style="padding:10px 14px;text-align:left;color:#64748b;font-weight:700;font-size:10px;letter-spacing:.05em;border-bottom:1px solid #1e293b;position:sticky;top:0;z-index:2;background:#0d131f;">REGION</th>
+                <th style="padding:10px 14px;text-align:left;color:#64748b;font-weight:700;font-size:10px;letter-spacing:.05em;border-bottom:1px solid #1e293b;position:sticky;top:0;z-index:2;background:#0d131f;">STATUS</th>
+                <th style="padding:10px 14px;text-align:left;color:#64748b;font-weight:700;font-size:10px;letter-spacing:.05em;border-bottom:1px solid #1e293b;position:sticky;top:0;z-index:2;background:#0d131f;">ATTACKS REPORTED</th>
+                <th style="padding:10px 14px;text-align:left;color:#64748b;font-weight:700;font-size:10px;letter-spacing:.05em;border-bottom:1px solid #1e293b;position:sticky;top:0;z-index:2;background:#0d131f;">LAST HEARTBEAT</th>
+                <th style="padding:10px 14px;text-align:left;color:#64748b;font-weight:700;font-size:10px;letter-spacing:.05em;border-bottom:1px solid #1e293b;position:sticky;top:0;z-index:2;background:#0d131f;">ROLE</th>
+                <th style="padding:10px 14px;text-align:center;color:#64748b;font-weight:700;font-size:10px;letter-spacing:.05em;border-bottom:1px solid #1e293b;position:sticky;top:0;z-index:2;background:#0d131f;">ACTION</th>
+              </tr>
+            </thead>
+            <tbody id="fed-nodes-tbody">
+              <tr><td colspan="7" class="empty-row" style="text-align:center;padding:24px;color:#94a3b8;">Loading federated sensors...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Register Remote Sensor Form Header Bar -->
+      <div class="fed-register-card">
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 8px; margin-bottom: 12px;">
+          <h3 class="fed-subheading" style="margin: 0;">REGISTER REMOTE SENSOR NODE</h3>
+          <span style="font-size: 11px; font-family: var(--font-mono); color: #38bdf8;">NEW NODE ONBOARDING</span>
+        </div>
+        <p style="font-size:11px;color:var(--muted);margin:0 0 12px 0;line-height:1.5;">
+          Connect an external honeypot instance to participate in the global threat intelligence mesh. Once registered, it appears directly in the monitor bar and roster above.
+        </p>
+        <form id="fed-register-form" class="fed-form-grid">
+          <div class="fed-input-col">
+            <label for="fed-input-id" class="fed-label">NODE ID</label>
+            <input type="text" id="fed-input-id" class="fed-input" placeholder="node-eu-london-01" required>
+          </div>
+          <div class="fed-input-col">
+            <label for="fed-input-name" class="fed-label">DISPLAY NAME</label>
+            <input type="text" id="fed-input-name" class="fed-input" placeholder="Sensor Node (London)" required>
+          </div>
+          <div class="fed-input-col">
+            <label for="fed-input-region" class="fed-label">REGION</label>
+            <input type="text" id="fed-input-region" class="fed-input" placeholder="EU-West (UK)" required>
+          </div>
+          <div class="fed-input-col">
+            <label for="fed-input-url" class="fed-label">ENDPOINT URL</label>
+            <input type="url" id="fed-input-url" class="fed-input" placeholder="https://uk.sensor.example.com">
+          </div>
+          <div class="fed-submit-col">
+            <button type="submit" id="btn-register-node" class="btn-register-node">ADD SENSOR</button>
+          </div>
+        </form>
+        <p class="fed-status-note" id="fed-action-status"></p>
+      </div>
+    </div>
+  </aside>
+</body>
+</html>

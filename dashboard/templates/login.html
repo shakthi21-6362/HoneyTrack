@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0a0a0b">
+  <meta name="description" content="Sign in to HoneyTrack, a defensive honeypot activity monitor.">
+  <title>Sign In | HoneyTrack</title>
+  <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/honeytrack.css">
+  <style>
+    .flash-banner {
+      background: var(--primary-soft);
+      border: 1px solid var(--primary);
+      color: var(--foreground);
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .flash-banner svg {
+      color: var(--primary);
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body class="login-page" data-page="login">
+  <main class="login-shell" id="login-shell">
+    <div class="login-heading">
+      <div class="brand brand-large">
+        <span class="brand-mark" aria-hidden="true"><span></span></span>
+        <span>HONEY<span class="brand-accent">TRACK</span></span>
+      </div>
+      <p class="tagline">TRAP. TRACK. PROFILE.</p>
+    </div>
+
+    <section class="login-card" aria-labelledby="login-title">
+      <div class="login-card-heading">
+        <div>
+          <p class="eyebrow"><span class="eyebrow-line"></span>SECURE ACCESS</p>
+          <h1 id="login-title">SIGN IN</h1>
+        </div>
+        <span class="login-card-symbol" aria-hidden="true">// 01</span>
+      </div>
+      <p class="login-intro">Enter your details to view the live threat overview.</p>
+
+      {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          {% for message in messages %}
+            <div class="flash-banner" role="alert">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              <span>{{ message }}</span>
+            </div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+
+      <form id="login-form" method="POST" action="/login" novalidate>
+        <div class="field" id="field-name" style="display: none;">
+          <label for="name">Operator Name</label>
+          <input id="name" name="name" type="text" autocomplete="name" placeholder="Ghost" aria-describedby="name-error">
+          <p class="field-error" id="name-error" aria-live="polite"></p>
+        </div>
+
+        <div class="field">
+          <label for="email">Email</label>
+          <input id="email" name="email" type="email" autocomplete="email" placeholder="operator@honeytrack.local" aria-describedby="email-error">
+          <p class="field-error" id="email-error" aria-live="polite"></p>
+        </div>
+
+        <div class="field">
+          <label for="password">Password</label>
+          <div class="password-wrap">
+            <input id="password" name="password" type="password" autocomplete="current-password" placeholder="Enter your password" aria-describedby="password-error">
+            <button class="password-toggle" id="password-toggle" type="button" aria-label="Show password" aria-pressed="false">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12Z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+            </button>
+          </div>
+          <p class="field-error" id="password-error" aria-live="polite"></p>
+        </div>
+
+        <button class="button button-primary sign-in-button" id="submit-button" type="submit">
+          <span id="submit-label">Sign In</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 12h14m-6-6 6 6-6 6"/>
+          </svg>
+        </button>
+      </form>
+
+      <p class="mode-switch">
+        <span id="mode-prompt">New to HoneyTrack?</span> 
+        <a href="#create-account" id="mode-link">Create Account</a>
+      </p>
+    </section>
+
+    <footer class="login-footer">DEFENSIVE SECURITY TOOL. OBSERVATION ONLY.</footer>
+  </main>
+
+  <script>
+    (() => {
+      const $ = (s) => document.querySelector(s);
+      const form = $('#login-form');
+      const toggle = $('#password-toggle');
+      const password = $('#password');
+      const modeLink = $('#mode-link');
+      const fieldName = $('#field-name');
+      const nameInput = $('#name');
+      let creating = false;
+
+      toggle.addEventListener('click', () => {
+        const showing = password.type === 'password';
+        password.type = showing ? 'text' : 'password';
+        toggle.setAttribute('aria-label', showing ? 'Hide password' : 'Show password');
+        toggle.setAttribute('aria-pressed', String(showing));
+      });
+
+      modeLink.addEventListener('click', (event) => {
+        event.preventDefault();
+        creating = !creating;
+        $('#login-title').textContent = creating ? 'CREATE ACCOUNT' : 'SIGN IN';
+        $('#submit-label').textContent = creating ? 'Create Account' : 'Sign In';
+        $('#mode-prompt').textContent = creating ? 'Already have an account?' : 'New to HoneyTrack?';
+        modeLink.textContent = creating ? 'Sign In' : 'Create Account';
+        form.action = creating ? '/register' : '/login';
+        password.autocomplete = creating ? 'new-password' : 'current-password';
+        fieldName.style.display = creating ? 'block' : 'none';
+
+        form.querySelectorAll('.field-error').forEach((error) => error.textContent = '');
+        form.querySelectorAll('input').forEach((input) => input.removeAttribute('aria-invalid'));
+        if (creating) {
+          nameInput.focus();
+        } else {
+          $('#email').focus();
+        }
+      });
+
+      const setError = (id, message) => {
+        const input = $(`#${id}`);
+        $(`#${id}-error`).textContent = message;
+        input.setAttribute('aria-invalid', message ? 'true' : 'false');
+        if (message) {
+          const field = input.closest('.field');
+          field.classList.remove('shake');
+          void field.offsetWidth;
+          field.classList.add('shake');
+        }
+      };
+
+      ['name', 'email', 'password'].forEach((id) => {
+        const el = $(`#${id}`);
+        if (el) el.addEventListener('input', () => setError(id, ''));
+      });
+
+      form.addEventListener('submit', (event) => {
+        let hasError = false;
+        const email = $('#email').value.trim();
+        const secret = password.value;
+
+        if (creating) {
+          const name = nameInput.value.trim();
+          if (!name) {
+            setError('name', 'Operator name is required.');
+            hasError = true;
+          }
+        }
+
+        if (!email) {
+          setError('email', 'Email is required.');
+          hasError = true;
+        } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          setError('email', 'Enter a valid email address.');
+          hasError = true;
+        }
+
+        if (!secret) {
+          setError('password', 'Password is required.');
+          hasError = true;
+        } else if (secret.length < 4) {
+          setError('password', 'Use at least 4 characters.');
+          hasError = true;
+        }
+
+        if (hasError) {
+          event.preventDefault();
+          const invalid = form.querySelector('[aria-invalid="true"]');
+          if (invalid) invalid.focus();
+          return;
+        }
+
+        const submit = $('#submit-button');
+        submit.disabled = true;
+        $('#submit-label').textContent = creating ? 'Creating account...' : 'Signing in...';
+        $('#login-shell').classList.add('is-leaving');
+      });
+    })();
+  </script>
+</body>
+</html>
