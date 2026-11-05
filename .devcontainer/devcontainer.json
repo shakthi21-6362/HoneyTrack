@@ -1,0 +1,28 @@
+{
+  "name": "HoneyTrack Cloud Honeypot",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12-bookworm",
+  "forwardPorts": [5000, 2222, 8080],
+  "portsAttributes": {
+    "5000": {
+      "label": "HoneyTrack Web Dashboard",
+      "onAutoForward": "openBrowser",
+      "visibility": "public"
+    },
+    "2222": {
+      "label": "SSH Honeypot Decoy",
+      "visibility": "public"
+    },
+    "8080": {
+      "label": "HTTP Honeypot Decoy",
+      "visibility": "public"
+    }
+  },
+  "postCreateCommand": "pip install --no-cache-dir -r requirements.txt",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python"
+      }
+    }
+  }
+}
