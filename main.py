@@ -94,6 +94,16 @@ Examples:
         default=DASHBOARD_PORT,
         help=f"Dashboard port (default: {DASHBOARD_PORT})"
     )
+    parser.add_argument(
+        "--reset-live",
+        action="store_true",
+        help="Purge prior live production telemetry for a clean zero-attack start"
+    )
+    parser.add_argument(
+        "--reset-all",
+        action="store_true",
+        help="Purge all attack telemetry (both live and demo simulation records)"
+    )
     return parser.parse_args()
 
 
@@ -126,8 +136,30 @@ def main():
     logger.info("  =============================================\n")
 
     # ── Initialize Database ──
-    from database.database import init_db
+    from database.database import init_db, SessionLocal
+    from database.models import AttackEvent, BlockedIP, SessionRecording, FederatedNode
     init_db()
+
+    # ── Handle Database Reset Flags ──
+    if args.reset_live or args.reset_all:
+        db = SessionLocal()
+        try:
+            if args.reset_all:
+                evt_count = db.query(AttackEvent).delete()
+                ip_count = db.query(BlockedIP).delete()
+                sess_count = db.query(SessionRecording).delete()
+                db.query(FederatedNode).filter(FederatedNode.node_id != settings.NODE_ID).delete()
+                db.commit()
+                logger.info(f"[MAIN] [+] Complete Reset: Cleared {evt_count} attacks, {ip_count} blocked IPs, {sess_count} recordings, and reset sensor nodes.")
+            elif args.reset_live:
+                count = db.query(AttackEvent).filter(AttackEvent.is_demo == False).delete()
+                db.commit()
+                logger.info(f"[MAIN] [+] Cleared {count} past live production attack records for a clean start.")
+        except Exception as e:
+            db.rollback()
+            logger.error(f"[MAIN] [-] Failed to clear database: {e}")
+        finally:
+            db.close()
 
     threads = []
 
@@ -136,30 +168,30 @@ def main():
         # SSH Honeypot
         if not args.no_ssh:
             try:
+                logger.info(f"[MAIN] [+] Starting SSH honeypot on port {SSH_PORT}...")
                 from honeypot.ssh_listener import start_ssh_honeypot
                 t = start_listener_thread("SSH", start_ssh_honeypot)
                 threads.append(t)
-                logger.info(f"[MAIN] [+] SSH honeypot starting on port {SSH_PORT}")
             except Exception as e:
                 logger.error(f"[MAIN] [-] SSH honeypot failed: {e}")
 
         # HTTP Honeypot
         if not args.no_http:
             try:
+                logger.info(f"[MAIN] [+] Starting HTTP honeypot on port {HTTP_PORT}...")
                 from honeypot.http_listener import start_http_honeypot
                 t = start_listener_thread("HTTP", start_http_honeypot)
                 threads.append(t)
-                logger.info(f"[MAIN] [+] HTTP honeypot starting on port {HTTP_PORT}")
             except Exception as e:
                 logger.error(f"[MAIN] [-] HTTP honeypot failed: {e}")
 
         # FTP Honeypot
         if not args.no_ftp:
             try:
+                logger.info(f"[MAIN] [+] Starting FTP honeypot on port {FTP_PORT}...")
                 from honeypot.ftp_listener import start_ftp_honeypot
                 t = start_listener_thread("FTP", start_ftp_honeypot)
                 threads.append(t)
-                logger.info(f"[MAIN] [+] FTP honeypot starting on port {FTP_PORT}")
             except Exception as e:
                 logger.error(f"[MAIN] [-] FTP honeypot failed: {e}")
 

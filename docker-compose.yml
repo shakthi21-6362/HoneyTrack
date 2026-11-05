@@ -1,0 +1,143 @@
+# =============================================================================
+# HoneyTrack - Docker Compose Configuration
+# Supports both:
+#   1) Default SQLite standalone:      docker compose up -d
+#   2) PostgreSQL / TimescaleDB profile: docker compose --profile timescale up -d
+# =============================================================================
+
+version: "3.8"
+
+services:
+  # ───────────────────────────────────────────────────────────────────────────
+  # TimescaleDB / PostgreSQL Time-Series Database Service
+  # ───────────────────────────────────────────────────────────────────────────
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: honeytrack-timescaledb
+    restart: unless-stopped
+    profiles:
+      - timescale
+      - prod-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-honeytrack_secure_pass_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-honeytrack}
+      TIMESCALEDB_TELEMETRY: "off"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      - ./database/init_timescaledb.sql:/docker-entrypoint-initdb.d/init_timescaledb.sql:ro
+    ports:
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-honeytrack}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - honeytrack-net
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # HoneyTrack Application (Default SQLite / Standalone)
+  # ───────────────────────────────────────────────────────────────────────────
+  honeytrack:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: honeytrack
+    restart: unless-stopped
+    profiles:
+      - default
+      - sqlite
+
+    # Port mappings: Web Dashboard, SSH Honeypot, HTTP Honeypot, FTP Honeypot
+    ports:
+      - "${DASHBOARD_PORT:-5000}:5000"
+      - "${SSH_PORT:-2222}:2222"
+      - "${HTTP_PORT:-8080}:8080"
+      - "${FTP_PORT:-2121}:2121"
+
+    # Persistent host volumes
+    volumes:
+      - ./data:/app/data
+      - ./ssh_keys:/app/ssh_keys
+      - ./honeytrack.db:/app/honeytrack.db
+
+    # Environment configuration
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - DATABASE_PATH=/app/honeytrack.db
+      - SSH_HOST_KEY_PATH=/app/ssh_keys/ssh_host_key
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/login"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
+    command: ["python", "main.py"]
+
+    networks:
+      - honeytrack-net
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # HoneyTrack Application with TimescaleDB / PostgreSQL Backend
+  # ───────────────────────────────────────────────────────────────────────────
+  honeytrack-timescale:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: honeytrack-timescale
+    restart: unless-stopped
+    profiles:
+      - timescale
+      - prod-db
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
+    command: ["python", "main.py"]
+
+    ports:
+      - "${DASHBOARD_PORT:-5000}:5000"
+      - "${SSH_PORT:-2222}:2222"
+      - "${HTTP_PORT:-8080}:8080"
+      - "${FTP_PORT:-2121}:2121"
+
+    volumes:
+      - ./data:/app/data
+      - ./ssh_keys:/app/ssh_keys
+
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-honeytrack_secure_pass_2026}
+      - POSTGRES_DB=${POSTGRES_DB:-honeytrack}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-honeytrack_secure_pass_2026}@timescaledb:5432/${POSTGRES_DB:-honeytrack}
+      - SSH_HOST_KEY_PATH=/app/ssh_keys/ssh_host_key
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/login"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
+    networks:
+      - honeytrack-net
+
+volumes:
+  timescale_data:
+    driver: local
+
+networks:
+  honeytrack-net:
+    driver: bridge

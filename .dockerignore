@@ -1,0 +1,42 @@
+# =============================================================================
+# HoneyTrack - Docker Ignore
+# Files and directories excluded from the Docker build context
+# =============================================================================
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Git
+.git/
+.gitignore
+
+# Environment & secrets
+.env
+*.pem
+*.key
+ssh_host_key*
+
+# Data files (mounted as volumes instead)
+*.db
+
+# Logs
+*.log
+
+# Node
+node_modules/
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+Thumbs.db
+.DS_Store
+
+# Docker files (no need to include in build context)
+docker-compose*.yml

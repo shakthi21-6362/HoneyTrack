@@ -1,22 +1,20 @@
 import io
-from datetime import datetime
+from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request, render_template, session, redirect, send_file
 from sqlalchemy import func, desc, distinct
 from database.database import SessionLocal
 from database.models import AttackEvent
 import config.settings as settings
+from auth.security import log_admin_action
 
 api_bp = Blueprint('api', __name__)
 
 
 def get_current_mode():
     """
-    Returns active operating mode: 'production', 'demo', or 'all'.
-    Defaults to the server's running configuration.
+    Returns active operating mode: 'production' or 'demo'.
+    Strictly follows the server's running configuration (settings.IS_DEMO_MODE).
     """
-    mode = request.args.get('mode', default=None, type=str)
-    if mode in ('production', 'demo', 'all'):
-        return mode
     return 'demo' if settings.IS_DEMO_MODE else 'production'
 
 
@@ -78,8 +76,8 @@ def index():
     """Serves the dashboard template directly."""
     current_mode = "DEMO" if settings.IS_DEMO_MODE else "PRODUCTION"
     return render_template('dashboard.html', 
-                           user_name=session.get('user_name', 'Ghost'),
-                           user_email=session.get('user_email', 'shakthin21@gmail.com'),
+                           user_name=session.get('user_name', 'Operator'),
+                           user_email=session.get('user_email', ''),
                            system_mode=current_mode)
 
 
@@ -150,8 +148,41 @@ def get_latest_events():
     db = SessionLocal()
     try:
         since_id = request.args.get('since_id', default=0, type=int)
-        query = db.query(AttackEvent).filter(AttackEvent.id > since_id)
+        query = db.query(AttackEvent)
         query = apply_mode_filter(query)
+
+        # Safety guard: if since_id exceeds maximum ID in current partition (e.g. after mode switch), reset
+        if since_id > 0:
+            max_id = query.with_entities(func.max(AttackEvent.id)).scalar() or 0
+            if since_id <= max_id:
+                query = query.filter(AttackEvent.id > since_id)
+            else:
+                query = query.order_by(desc(AttackEvent.timestamp)).limit(20)
+                events = query.all()
+                events_list = [
+                    {
+                        "id": e.id,
+                        "timestamp": e.timestamp.isoformat() if e.timestamp else None,
+                        "source_ip": e.source_ip,
+                        "service": e.service,
+                        "username": e.username,
+                        "password": e.password,
+                        "command": e.command,
+                        "user_agent": e.user_agent,
+                        "country": e.country,
+                        "city": e.city,
+                        "isp": e.isp,
+                        "latitude": e.latitude,
+                        "longitude": e.longitude,
+                        "attack_type": e.attack_type,
+                        "risk_score": e.risk_score,
+                        "is_tor": e.is_tor,
+                        "is_demo": e.is_demo
+                    }
+                    for e in events
+                ]
+                return jsonify(events_list)
+
         events = query.order_by(desc(AttackEvent.timestamp)).all()
 
         events_list = [
@@ -420,7 +451,7 @@ def download_pdf_report():
         from reports.pdf_generator import generate_threat_report_pdf
         pdf_bytes = generate_threat_report_pdf(stats, events_list, filter_summary=filter_desc)
 
-        filename = f"HoneyTrack_{mode.upper()}_Report_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.pdf"
+        filename = f"HoneyTrack_{mode.upper()}_Report_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.pdf"
         return send_file(
             io.BytesIO(pdf_bytes),
             mimetype="application/pdf",
@@ -437,10 +468,13 @@ def download_pdf_report():
 @api_bp.route('/api/admin/clear-live', methods=['POST'])
 def clear_live_events():
     """Clears authentic live production telemetry so operators can restart fresh counts."""
+    operator_name = session.get('user_name', 'Operator')
+    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr or 'unknown').split(',')[0].strip()
     db = SessionLocal()
     try:
         deleted = db.query(AttackEvent).filter(AttackEvent.is_demo == False).delete()
         db.commit()
+        log_admin_action(operator_name, "CLEAR_LIVE_TELEMETRY", {"cleared_records": deleted}, ip=client_ip)
         return jsonify({"success": True, "cleared_records": deleted})
     except Exception as e:
         db.rollback()
@@ -528,6 +562,9 @@ def block_ip_endpoint():
         blocked_by=f"Operator ({operator_name})",
         execute_system=execute_system
     )
+    if success:
+        client_ip = request.headers.get('X-Forwarded-For', request.remote_addr or 'unknown').split(',')[0].strip()
+        log_admin_action(operator_name, "MANUAL_BLOCK_IP", {"ip": ip, "reason": reason, "risk_score": risk_score}, ip=client_ip)
     return jsonify({
         "success": success,
         "ip": ip,
@@ -548,6 +585,10 @@ def unblock_ip_endpoint():
         return jsonify({"error": "Missing 'ip' field."}), 400
 
     success, message = unblock_ip(ip=ip, execute_system=execute_system)
+    if success:
+        operator_name = session.get('user_name', 'Operator')
+        client_ip = request.headers.get('X-Forwarded-For', request.remote_addr or 'unknown').split(',')[0].strip()
+        log_admin_action(operator_name, "MANUAL_UNBLOCK_IP", {"ip": ip}, ip=client_ip)
     return jsonify({
         "success": success,
         "ip": ip,
@@ -572,8 +613,13 @@ def get_sessions_endpoint():
 
 @api_bp.route('/api/sessions/<session_id>/replay', methods=['GET'])
 def get_session_replay_endpoint(session_id):
-    """Returns interactive replay event stream for a specific session."""
+    """Returns interactive replay event stream for a specific session with IDOR protection."""
     from sessions.session_recorder import get_session_replay
+    import re
+    # Validate session_id format to prevent path traversal or injection
+    if not session_id or not re.match(r'^[a-zA-Z0-9_\-\.]{3,128}$', session_id):
+        return jsonify({"error": "Invalid session identifier"}), 400
+
     replay = get_session_replay(session_id)
     if not replay:
         return jsonify({"error": "Session recording not found"}), 404
@@ -770,6 +816,8 @@ def search_federation_threat_endpoint():
         })
     finally:
         db.close()
+
+
 
 
 

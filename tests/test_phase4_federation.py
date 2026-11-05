@@ -162,6 +162,18 @@ def test_4_federation_api_endpoints():
     assert len(nodes_data["nodes"]) > 0
     print(f"  -> PASS: Operator console retrieved {len(nodes_data['nodes'])} federated sensor nodes.")
 
+    # Cleanup test nodes and test data
+    from database.database import SessionLocal
+    from database.models import FederatedNode, AttackEvent, BlockedIP
+    db = SessionLocal()
+    try:
+        db.query(FederatedNode).filter(FederatedNode.node_id.like("edge-node-test%")).delete()
+        db.query(BlockedIP).filter(BlockedIP.ip_address == "198.51.100.99").delete()
+        db.query(AttackEvent).filter(AttackEvent.source_ip == "198.51.100.99").delete()
+        db.commit()
+    finally:
+        db.close()
+
 
 if __name__ == "__main__":
     test_1_hmac_signatures()

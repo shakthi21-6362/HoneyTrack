@@ -26,7 +26,59 @@ HoneyTrack is a defensive cybersecurity tool that deploys fake internet-facing s
 
 ---
 
-## 🚀 Quick Start
+## 🐳 1-Command Docker Deployment (Recommended)
+
+HoneyTrack can be completely installed and run by anyone with **a single command** using Docker & Docker Compose:
+
+### Option A: One-Command Scripts
+- **Windows (PowerShell)**:
+  ```powershell
+  # Default SQLite standalone:
+  .\deploy.ps1
+
+  # Enterprise TimescaleDB / PostgreSQL time-series profile:
+  .\deploy.ps1 -Mode timescale
+
+  # Production mode with TimescaleDB (pure live sensors, no simulation):
+  .\deploy.ps1 -Mode timescale-prod
+  ```
+- **Linux / macOS**:
+  ```bash
+  chmod +x deploy.sh
+  # Default SQLite:
+  ./deploy.sh
+
+  # TimescaleDB / PostgreSQL profile:
+  ./deploy.sh --timescale
+
+  # Production with TimescaleDB:
+  ./deploy.sh --timescale-prod
+  ```
+
+### Option B: Docker Compose directly
+```bash
+# 1. Default SQLite deployment (Demo mode: live sensors + simulated attack stream)
+docker compose up -d
+
+# 2. Enterprise TimescaleDB / PostgreSQL profile (Millions of events, zero database locking)
+docker compose --profile timescale up -d
+
+# 3. Production mode with TimescaleDB (Live sensors only)
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile timescale up -d
+
+# 4. View live logs
+docker compose logs -f
+
+# 5. Stop all containers
+docker compose --profile timescale down
+```
+
+Dashboard is immediately accessible at **[http://localhost:5000](http://localhost:5000)**.
+When running the `timescale` profile, TimescaleDB automatically runs on port `5432` with high-performance partitioned hypertables. Data is persisted in Docker volume `timescale_data`.
+
+---
+
+## 🚀 Native Python Setup (Alternative)
 
 ### Prerequisites
 

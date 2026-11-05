@@ -1,207 +1,258 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#0a0a0b">
-  <meta name="description" content="Sign in to HoneyTrack, a defensive honeypot activity monitor.">
-  <title>Sign In | HoneyTrack</title>
-  <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/honeytrack.css">
-  <style>
-    .flash-banner {
-      background: var(--primary-soft);
-      border: 1px solid var(--primary);
-      color: var(--foreground);
-      padding: 10px 14px;
-      border-radius: 6px;
-      font-size: 12px;
-      margin-bottom: 20px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .flash-banner svg {
-      color: var(--primary);
-      flex-shrink: 0;
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · HoneyTrack</title>
+<link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/DotField.css?v=1.0">
+<style>
+:root{
+  --bg:#060608; --panel:#101013; --line:#24242b; --line-hi:#3a3a44;
+  --text:#f2f2f5; --muted:#8a8a96; --red:#e5222f; --red-glow:rgba(229,34,47,.35);
+  --blue:#6b7fa8; --ok:#2fbf71;
+  --head:'Chakra Petch',system-ui,sans-serif; --body:'Inter',system-ui,sans-serif; --mono:'JetBrains Mono',ui-monospace,monospace;
+}
+*{box-sizing:border-box;margin:0}
+html,body{min-height:100vh;margin:0}
+body{background:var(--bg);color:var(--text);font-family:var(--body);display:flex;flex-direction:column;align-items:center;justify-content:center;overflow-x:hidden;overflow-y:auto;padding:36px 20px;position:relative;box-sizing:border-box}
+
+/* ---------- Layout ---------- */
+main{position:relative;z-index:2;width:100%;max-width:420px;display:flex;flex-direction:column;align-items:center;margin:auto 0}
+.brand{display:flex;align-items:center;gap:14px;font-family:var(--head);font-weight:700;font-size:30px;letter-spacing:.02em}
+.brand b{color:var(--red);font-weight:700}
+.brand-knight-icon{width:42px;height:42px;object-fit:contain;filter:drop-shadow(0 0 12px rgba(229,34,47,.45))}
+.tag{margin-top:10px;font:400 11px/1 var(--mono);letter-spacing:.3em;color:var(--blue)}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.card{position:relative;width:100%;margin-top:34px;padding:34px 32px 28px;background:linear-gradient(180deg,rgba(18,18,22,.92),rgba(12,12,15,.92));
+  border:1px solid var(--line);border-radius:14px;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  box-shadow:0 30px 80px -20px rgba(0,0,0,.85),0 0 0 1px rgba(255,255,255,.03) inset;overflow:hidden;
+  --mx:50%;--my:0%;opacity:1}
+/* cursor spotlight on the card edge */
+.card::before{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;pointer-events:none;
+  background:radial-gradient(260px circle at var(--mx) var(--my),var(--red),transparent 70%);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;opacity:.85}
+/* one-time scan line on load */
+.card::after{content:"";position:absolute;left:0;right:0;top:0;height:2px;background:linear-gradient(90deg,transparent,var(--red),transparent);
+  box-shadow:0 0 18px 3px var(--red-glow);animation:scan 1.4s .5s cubic-bezier(.6,.1,.3,1) 1 both;pointer-events:none}
+@keyframes scan{0%{transform:translateY(0);opacity:1}100%{transform:translateY(520px);opacity:0}}
+
+.intro{animation:rise .8s cubic-bezier(.2,.8,.2,1) both}
+@keyframes rise{from{opacity:0;transform:translateY(18px) scale(.985)}to{opacity:1;transform:none}}
+main>.brand,main>.tag{animation:rise .8s .05s cubic-bezier(.2,.8,.2,1) both;opacity:1}
+.card.intro{animation-delay:.15s}
+
+.secure{display:flex;align-items:center;gap:8px;font:400 11px/1 var(--mono);letter-spacing:.18em;color:var(--red);text-transform:uppercase}
+.secure span{width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 0 rgba(47,191,113,.6);animation:ping 2s infinite}
+@keyframes ping{70%{box-shadow:0 0 0 8px rgba(47,191,113,0)}100%{box-shadow:0 0 0 0 rgba(47,191,113,0)}}
+h1{margin-top:14px;font:700 28px/1.1 var(--head);letter-spacing:.04em}
+.sub{margin-top:8px;font-size:13px;line-height:1.5;color:var(--muted)}
+
+/* Flash error banner */
+.msg-banner{background:rgba(229,34,47,0.15);border:1px solid var(--red);color:#ff858d;padding:10px 14px;border-radius:8px;font-size:12.5px;margin-top:16px;display:flex;align-items:center;gap:8px}
+
+form{margin-top:22px;display:grid;gap:18px}
+.field label{display:block;font-size:12px;font-weight:600;margin-bottom:8px}
+.control{position:relative}
+.control input{width:100%;height:46px;padding:0 44px 0 14px;background:#08080a;color:var(--text);border:1px solid var(--line-hi);border-radius:9px;
+  font:400 14px var(--body);outline:none;transition:border-color .2s,box-shadow .2s,background .2s}
+.control input::placeholder{color:#55555f}
+.control input:hover{border-color:#4a4a56}
+.control input:focus{border-color:var(--red);box-shadow:0 0 0 4px rgba(229,34,47,.14),0 0 24px -4px var(--red-glow);background:#0a0a0d}
+.field.err input{border-color:var(--red);animation:shake .4s}
+.msg{min-height:0;max-height:0;overflow:hidden;font-size:12px;color:#ff6a73;transition:max-height .25s,margin .25s}
+.field.err .msg{max-height:24px;margin-top:7px}
+.caps{display:none;margin-top:7px;font-size:12px;color:#e0b341}
+.caps.on{display:block}
+@keyframes shake{20%,60%{transform:translateX(-5px)}40%,80%{transform:translateX(5px)}}
+
+.eye{position:absolute;right:4px;top:4px;width:38px;height:38px;display:grid;place-items:center;background:none;border:0;border-radius:7px;color:var(--muted);cursor:pointer;transition:color .2s,background .2s}
+.eye:hover{color:var(--text);background:rgba(255,255,255,.05)}
+.eye svg{width:18px;height:18px}
+.eye .off{display:none}.eye.show .on{display:none}.eye.show .off{display:block}
+
+.row{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--muted)}
+.check{display:flex;align-items:center;gap:8px;cursor:pointer}
+.check input{accent-color:var(--red);width:15px;height:15px}
+a{color:var(--red);text-decoration:none;font-weight:600}
+a:hover{text-decoration:underline;text-underline-offset:3px}
+
+.btn{position:relative;height:48px;border:0;border-radius:9px;background:var(--red);color:#fff;font:600 14px var(--body);cursor:pointer;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;gap:10px;transition:transform .15s,box-shadow .25s,background .2s;box-shadow:0 8px 24px -8px var(--red-glow)}
+.btn::before{content:"";position:absolute;top:0;left:-60%;width:40%;height:100%;background:linear-gradient(100deg,transparent,rgba(255,255,255,.28),transparent);transform:skewX(-20deg);transition:left .6s}
+.btn:hover{box-shadow:0 10px 32px -6px rgba(229,34,47,.6);transform:translateY(-1px)}
+.btn:hover::before{left:130%}
+.btn:active{transform:translateY(1px)}
+.btn svg{width:16px;height:16px;transition:transform .25s}
+.btn:hover svg{transform:translateX(4px)}
+.btn .spin{display:none;width:18px;height:18px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite}
+.btn.loading{pointer-events:none;background:#b81a25}
+.btn.loading .spin{display:block}.btn.loading svg{display:none}
+
+.alt{margin-top:22px;text-align:center;font-size:12px;color:var(--blue)}
+.alt a{margin-left:4px;cursor:pointer}
+.foot{margin-top:28px;font:400 10px/1.6 var(--mono);letter-spacing:.2em;color:#4d5470;text-align:center;text-transform:uppercase}
+
+:focus-visible{outline:2px solid #fff;outline-offset:2px}
+@media (max-width:440px){.card{padding:28px 22px 24px}.brand{font-size:26px}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+</style>
 </head>
-<body class="login-page" data-page="login">
-  <main class="login-shell" id="login-shell">
-    <div class="login-heading">
-      <div class="brand brand-large">
-        <span class="brand-mark" aria-hidden="true"><span></span></span>
-        <span>HONEY<span class="brand-accent">TRACK</span></span>
-      </div>
-      <p class="tagline">TRAP. TRACK. PROFILE.</p>
-    </div>
+<body>
 
-    <section class="login-card" aria-labelledby="login-title">
-      <div class="login-card-heading">
-        <div>
-          <p class="eyebrow"><span class="eyebrow-line"></span>SECURE ACCESS</p>
-          <h1 id="login-title">SIGN IN</h1>
-        </div>
-        <span class="login-card-symbol" aria-hidden="true">// 01</span>
-      </div>
-      <p class="login-intro">Enter your details to view the live threat overview.</p>
+<!-- Interactive DotField Grid Background -->
+<div id="dot-field" class="dot-field-container" aria-hidden="true"></div>
 
-      {% with messages = get_flashed_messages() %}
-        {% if messages %}
-          {% for message in messages %}
-            <div class="flash-banner" role="alert">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-              <span>{{ message }}</span>
-            </div>
-          {% endfor %}
-        {% endif %}
-      {% endwith %}
+<main>
+  <div class="brand">
+    <img src="/static/img/logo.png" alt="HoneyTrack Knight Logo" class="brand-knight-icon">
+    <span>HONEY<b>TRACK</b></span>
+  </div>
+  <p class="tag">TRAP. TRACK. PROFILE.</p>
 
-      <form id="login-form" method="POST" action="/login" novalidate>
-        <div class="field" id="field-name" style="display: none;">
-          <label for="name">Operator Name</label>
-          <input id="name" name="name" type="text" autocomplete="name" placeholder="Ghost" aria-describedby="name-error">
-          <p class="field-error" id="name-error" aria-live="polite"></p>
-        </div>
+  <section class="card intro" id="card">
+    <div class="secure"><span></span>Secure access</div>
+    <h1 id="form-heading">{% if is_register %}Create Account{% else %}Sign in{% endif %}</h1>
+    <p class="sub" id="form-sub">{% if is_register %}Register an operator ID to access telemetry.{% else %}Enter your details to view the live threat overview.{% endif %}</p>
 
-        <div class="field">
-          <label for="email">Email</label>
-          <input id="email" name="email" type="email" autocomplete="email" placeholder="operator@honeytrack.local" aria-describedby="email-error">
-          <p class="field-error" id="email-error" aria-live="polite"></p>
-        </div>
-
-        <div class="field">
-          <label for="password">Password</label>
-          <div class="password-wrap">
-            <input id="password" name="password" type="password" autocomplete="current-password" placeholder="Enter your password" aria-describedby="password-error">
-            <button class="password-toggle" id="password-toggle" type="button" aria-label="Show password" aria-pressed="false">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12Z"/>
-                <circle cx="12" cy="12" r="3"/>
-              </svg>
-            </button>
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        {% for message in messages %}
+          <div class="msg-banner" role="alert">
+            <span>{{ message }}</span>
           </div>
-          <p class="field-error" id="password-error" aria-live="polite"></p>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <form id="form" method="post" action="{% if is_register %}/register{% else %}/login{% endif %}" novalidate>
+      <div class="field" id="f-name" style="{% if not is_register %}display:none;{% endif %}">
+        <label for="name">Operator Name</label>
+        <div class="control"><input id="name" name="name" type="text" placeholder="Ghost" autocomplete="name" value="{{ request.form.get('name', '') }}"></div>
+        <div class="msg" role="alert">Enter your operator name.</div>
+      </div>
+
+      <div class="field" id="f-email">
+        <label for="email">Email</label>
+        <div class="control"><input id="email" name="email" type="email" placeholder="operator@honeytrack.local" autocomplete="username" value="{{ request.form.get('email', '') }}" required></div>
+        <div class="msg" role="alert">Enter a valid email address.</div>
+      </div>
+
+      <div class="field" id="f-pass">
+        <label for="password">Password</label>
+        <div class="control">
+          <input id="password" name="password" type="password" placeholder="Enter your password (min 6 chars)" autocomplete="current-password" minlength="6" required>
+          <button class="eye" type="button" id="eye" aria-label="Show password">
+            <svg class="on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg class="off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18M10.6 6.1A10 10 0 0 1 12 6c6.5 0 10 6 10 6a17 17 0 0 1-3.2 3.9M6.6 7.6A17 17 0 0 0 2 12s3.5 6 10 6c1.6 0 3-.4 4.3-1M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+          </button>
         </div>
+        <div class="caps" id="caps">Caps Lock is on.</div>
+        <div class="msg" role="alert">Enter your password.</div>
+      </div>
 
-        <button class="button button-primary sign-in-button" id="submit-button" type="submit">
-          <span id="submit-label">Sign In</span>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M5 12h14m-6-6 6 6-6 6"/>
-          </svg>
-        </button>
-      </form>
+      <div class="row" id="row-options">
+        <label class="check"><input type="checkbox" name="remember" value="true"> Keep me signed in</label>
+        <a href="#" onclick="alert('Contact your system administrator to reset credentials.'); return false;">Forgot password?</a>
+      </div>
 
-      <p class="mode-switch">
-        <span id="mode-prompt">New to HoneyTrack?</span> 
-        <a href="#create-account" id="mode-link">Create Account</a>
-      </p>
-    </section>
+      <button class="btn" id="btn" type="submit">
+        <span class="label" id="btn-label">{% if is_register %}Create Account{% else %}Sign in{% endif %}</span>
+        <span class="spin" aria-hidden="true"></span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </button>
+    </form>
 
-    <footer class="login-footer">DEFENSIVE SECURITY TOOL. OBSERVATION ONLY.</footer>
-  </main>
+    <p class="alt" id="auth-toggle-p">
+      <span id="auth-toggle-text">{% if is_register %}Already have an account?{% else %}New to HoneyTrack?{% endif %}</span>
+      <a id="btn-auth-toggle">{% if is_register %}Sign in{% else %}Create account{% endif %}</a>
+    </p>
+  </section>
 
-  <script>
-    (() => {
-      const $ = (s) => document.querySelector(s);
-      const form = $('#login-form');
-      const toggle = $('#password-toggle');
-      const password = $('#password');
-      const modeLink = $('#mode-link');
-      const fieldName = $('#field-name');
-      const nameInput = $('#name');
-      let creating = false;
+  <p class="foot">Defensive security tool.<br>Observation only.</p>
+</main>
 
-      toggle.addEventListener('click', () => {
-        const showing = password.type === 'password';
-        password.type = showing ? 'text' : 'password';
-        toggle.setAttribute('aria-label', showing ? 'Hide password' : 'Show password');
-        toggle.setAttribute('aria-pressed', String(showing));
-      });
+<script src="/static/js/dot-field.js?v=1.0"></script>
+<script>
+const card=document.getElementById('card'),form=document.getElementById('form'),
+  email=document.getElementById('email'),pass=document.getElementById('password'),
+  nameInput=document.getElementById('name'),fieldName=document.getElementById('f-name'),
+  heading=document.getElementById('form-heading'),subHeading=document.getElementById('form-sub'),
+  btn=document.getElementById('btn'),btnLabel=document.getElementById('btn-label'),
+  eye=document.getElementById('eye'),caps=document.getElementById('caps'),
+  toggleBtn=document.getElementById('btn-auth-toggle'),toggleText=document.getElementById('auth-toggle-text');
 
-      modeLink.addEventListener('click', (event) => {
-        event.preventDefault();
-        creating = !creating;
-        $('#login-title').textContent = creating ? 'CREATE ACCOUNT' : 'SIGN IN';
-        $('#submit-label').textContent = creating ? 'Create Account' : 'Sign In';
-        $('#mode-prompt').textContent = creating ? 'Already have an account?' : 'New to HoneyTrack?';
-        modeLink.textContent = creating ? 'Sign In' : 'Create Account';
-        form.action = creating ? '/register' : '/login';
-        password.autocomplete = creating ? 'new-password' : 'current-password';
-        fieldName.style.display = creating ? 'block' : 'none';
+let isRegister = {% if is_register %}true{% else %}false{% endif %};
 
-        form.querySelectorAll('.field-error').forEach((error) => error.textContent = '');
-        form.querySelectorAll('input').forEach((input) => input.removeAttribute('aria-invalid'));
-        if (creating) {
-          nameInput.focus();
-        } else {
-          $('#email').focus();
-        }
-      });
+// cursor spotlight on card border
+document.addEventListener('pointermove',e=>{
+  const r=card.getBoundingClientRect();
+  card.style.setProperty('--mx',(e.clientX-r.left)+'px');
+  card.style.setProperty('--my',(e.clientY-r.top)+'px');
+});
 
-      const setError = (id, message) => {
-        const input = $(`#${id}`);
-        $(`#${id}-error`).textContent = message;
-        input.setAttribute('aria-invalid', message ? 'true' : 'false');
-        if (message) {
-          const field = input.closest('.field');
-          field.classList.remove('shake');
-          void field.offsetWidth;
-          field.classList.add('shake');
-        }
-      };
+// show / hide password
+eye.addEventListener('click',()=>{
+  const show=pass.type==='password';
+  pass.type=show?'text':'password';
+  eye.classList.toggle('show',show);
+  eye.setAttribute('aria-label',show?'Hide password':'Show password');
+});
 
-      ['name', 'email', 'password'].forEach((id) => {
-        const el = $(`#${id}`);
-        if (el) el.addEventListener('input', () => setError(id, ''));
-      });
+// caps lock warning
+['keydown','keyup'].forEach(ev=>pass.addEventListener(ev,e=>caps.classList.toggle('on',e.getModifierState&&e.getModifierState('CapsLock'))));
+pass.addEventListener('blur',()=>caps.classList.remove('on'));
 
-      form.addEventListener('submit', (event) => {
-        let hasError = false;
-        const email = $('#email').value.trim();
-        const secret = password.value;
+// validation
+const setErr=(id,bad)=>{const f=document.getElementById(id);f.classList.remove('err');if(bad){void f.offsetWidth;f.classList.add('err')}};
+[email,pass,nameInput].forEach(i=>i?.addEventListener('input',()=>i.closest('.field').classList.remove('err')));
 
-        if (creating) {
-          const name = nameInput.value.trim();
-          if (!name) {
-            setError('name', 'Operator name is required.');
-            hasError = true;
-          }
-        }
+// toggle login / register
+toggleBtn?.addEventListener('click',()=>{
+  isRegister = !isRegister;
+  if(isRegister){
+    form.action = '/register';
+    heading.textContent = 'Create Account';
+    subHeading.textContent = 'Register an operator ID to access telemetry.';
+    btnLabel.textContent = 'Create Account';
+    fieldName.style.display = 'block';
+    toggleText.textContent = 'Already have an account?';
+    toggleBtn.textContent = 'Sign in';
+  } else {
+    form.action = '/login';
+    heading.textContent = 'Sign in';
+    subHeading.textContent = 'Enter your details to view the live threat overview.';
+    btnLabel.textContent = 'Sign in';
+    fieldName.style.display = 'none';
+    toggleText.textContent = 'New to HoneyTrack?';
+    toggleBtn.textContent = 'Create account';
+  }
+});
 
-        if (!email) {
-          setError('email', 'Email is required.');
-          hasError = true;
-        } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-          setError('email', 'Enter a valid email address.');
-          hasError = true;
-        }
+form.addEventListener('submit',e=>{
+  const badE=!/^\S+@\S+\.\S+$/.test(email.value.trim()), badP=!pass.value;
+  let badN = false;
+  if(isRegister && !nameInput.value.trim()) badN = true;
 
-        if (!secret) {
-          setError('password', 'Password is required.');
-          hasError = true;
-        } else if (secret.length < 4) {
-          setError('password', 'Use at least 4 characters.');
-          hasError = true;
-        }
+  if(fieldName) setErr('f-name',badN);
+  setErr('f-email',badE);
+  setErr('f-pass',badP);
 
-        if (hasError) {
-          event.preventDefault();
-          const invalid = form.querySelector('[aria-invalid="true"]');
-          if (invalid) invalid.focus();
-          return;
-        }
-
-        const submit = $('#submit-button');
-        submit.disabled = true;
-        $('#submit-label').textContent = creating ? 'Creating account...' : 'Signing in...';
-        $('#login-shell').classList.add('is-leaving');
-      });
-    })();
-  </script>
+  if(badE||badP||badN){
+    e.preventDefault();
+    if(badN) nameInput.focus();
+    else if(badE) email.focus();
+    else pass.focus();
+    return;
+  }
+  // valid: show loading state
+  btn.classList.add('loading');
+  btnLabel.textContent = isRegister ? 'Creating Account…' : 'Verifying…';
+});
+</script>
 </body>
 </html>

@@ -9,6 +9,9 @@ import logging
 from datetime import datetime, timezone
 import paramiko
 
+# Silence noisy low-level socket abort stack traces from port scanners/probes
+logging.getLogger("paramiko.transport").setLevel(logging.CRITICAL)
+
 from config.settings import (
     SSH_HOST,
     SSH_PORT,

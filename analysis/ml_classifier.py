@@ -7,19 +7,15 @@ for automated attack categorization, anomaly scoring, and MITRE ATT&CK mapping.
 
 import math
 import re
-import os
+import threading
 from typing import Dict, Any, List, Tuple, Optional
-import numpy as np
-
-# Lazy imports for scikit-learn
-_SKLEARN_AVAILABLE = False
+# Lazy imports for numpy
+_NUMPY_AVAILABLE = False
 try:
-    from sklearn.ensemble import RandomForestClassifier
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.pipeline import Pipeline
-    _SKLEARN_AVAILABLE = True
+    import numpy as np
+    _NUMPY_AVAILABLE = True
 except ImportError:
-    pass
+    np = None
 
 # MITRE ATT&CK Mapping
 MITRE_ATTACK_MAPPING = {
@@ -97,19 +93,19 @@ def extract_features(
     has_url = 1.0 if re.search(r"https?://|ftp://|\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", cmd_lower) else 0.0
     has_chain = 1.0 if re.search(r";|&&|\|\||\|", cmd) else 0.0
 
-    recon_patterns = r"\b(whoami|id|uname|hostname|pwd|ls|ifconfig|ip\s+a|netstat|ps\s+|cat\s+/etc/passwd|cat\s+/etc/issue|lscpu)\b"
+    recon_patterns = r"(whoami|id|uname|hostname|pwd|ls\b|ifconfig|ip\s+a|netstat|ps\b|cat\s+/etc/|lscpu)"
     has_recon = 1.0 if re.search(recon_patterns, cmd_lower) else 0.0
 
-    download_patterns = r"\b(wget|curl|tftp|ftpget|bitsadmin|certutil|fetch|lynx)\b"
+    download_patterns = r"(wget|curl|tftp|ftpget|bitsadmin|certutil|fetch|lynx)"
     has_download = 1.0 if re.search(download_patterns, cmd_lower) else 0.0
 
-    privesc_patterns = r"\b(sudo|su\s+|chmod\s+\+?x|chmod\s+777|chown|useradd|crontab|systemctl|iptables)\b"
+    privesc_patterns = r"(sudo|su\s+|chmod\s+\+?x|chmod\s+777|chown|useradd|crontab|systemctl|iptables)"
     has_privesc = 1.0 if re.search(privesc_patterns, cmd_lower) else 0.0
 
-    revshell_patterns = r"\b(nc\s+-e|/bin/sh|/bin/bash|bash\s+-i|/dev/tcp/|pty\.spawn|socat|mkfifo)\b"
+    revshell_patterns = r"(nc\s+-e|/bin/sh|/bin/bash|bash\s+-i|/dev/tcp/|pty\.spawn|socat|mkfifo)"
     has_revshell = 1.0 if re.search(revshell_patterns, cmd_lower) else 0.0
 
-    crypto_patterns = r"\b(xmrig|minerd|stratum\+tcp|monero|cryptonight|mining)\b"
+    crypto_patterns = r"(xmrig|minerd|stratum\+tcp|monero|cryptonight|mining)"
     has_crypto = 1.0 if re.search(crypto_patterns, cmd_lower) else 0.0
 
     attempt_velocity = float(math.log1p(max(1, attempt_count)))
@@ -146,7 +142,9 @@ def extract_features(
         pwd_len
     ]
 
-    return np.array(features, dtype=np.float32)
+    if _NUMPY_AVAILABLE and np is not None:
+        return np.array(features, dtype=np.float32)
+    return features
 
 
 # Synthetic training corpus of diverse honeypot adversary techniques
@@ -223,16 +221,32 @@ class MLAttackClassifier:
     Random Forest Machine Learning model for intelligent honeypot attack classification.
     """
 
-    def __init__(self):
+    def __init__(self, async_train: bool = True):
         self.pipeline = None
         self.classes = []
         self._is_trained = False
-        if _SKLEARN_AVAILABLE:
+        self._is_training = False
+        self._lock = threading.Lock()
+        if async_train:
+            self._train_thread = threading.Thread(target=self._train_model, daemon=True, name="ML-Trainer")
+            self._train_thread.start()
+        else:
+            self._train_thread = None
             self._train_model()
 
     def _train_model(self):
         """Trains the Random Forest model on the cyber threat corpus."""
+        if not _NUMPY_AVAILABLE:
+            self._is_trained = False
+            return
+        with self._lock:
+            if self._is_trained or self._is_training:
+                return
+            self._is_training = True
         try:
+            from sklearn.ensemble import RandomForestClassifier
+            from sklearn.preprocessing import StandardScaler
+            from sklearn.pipeline import Pipeline
             X_data = []
             y_data = []
             for item in _TRAINING_CORPUS:
@@ -267,6 +281,8 @@ class MLAttackClassifier:
             self._is_trained = True
         except Exception as e:
             self._is_trained = False
+        finally:
+            self._is_training = False
 
     def predict(
         self,
@@ -290,6 +306,9 @@ class MLAttackClassifier:
             is_tor=is_tor
         )
 
+        if not self._is_trained and getattr(self, '_train_thread', None) and self._train_thread.is_alive():
+            self._train_thread.join(timeout=3.0)
+
         if self._is_trained and self.pipeline is not None:
             try:
                 X = features.reshape(1, -1)
@@ -300,13 +319,26 @@ class MLAttackClassifier:
                 max_idx = np.argmax(proba_arr)
                 confidence = float(proba_arr[max_idx])
                 
-                # Heuristic override for high-velocity brute force or obvious revshells
-                if attempt_count >= 5 and pred_label not in ("malware_download", "reverse_shell"):
+                # Heuristic override for high-confidence signatures
+                cmd_raw = (command or "").lower().strip()
+                if features[10] == 1.0 or any(k in cmd_raw for k in ["nc -e", "/dev/tcp", "pty.spawn", "/bin/sh", "/bin/bash"]):
+                    pred_label = "reverse_shell"
+                    confidence = max(confidence, 0.98)
+                elif features[8] == 1.0 or any(k in cmd_raw for k in ["wget", "curl", "ftpget", "certutil", "bitsadmin"]):
+                    pred_label = "malware_download"
+                    confidence = max(confidence, 0.95)
+                elif features[9] == 1.0 or any(k in cmd_raw for k in ["sudo", "chmod +x", "chmod 777", "chown", "useradd"]):
+                    pred_label = "privilege_escalation"
+                    confidence = max(confidence, 0.95)
+                elif features[7] == 1.0 or any(k in cmd_raw for k in ["whoami", "id", "uname", "hostname", "pwd", "ls", "ifconfig", "ip addr", "ip a", "netstat", "ps aux", "cat /etc/"]):
+                    pred_label = "recon"
+                    confidence = max(confidence, 0.92)
+                elif attempt_count >= 5 and pred_label not in ("malware_download", "reverse_shell"):
                     pred_label = "brute_force"
                     confidence = max(confidence, 0.95)
-                elif command and ("nc -e" in command or "/dev/tcp" in command):
-                    pred_label = "reverse_shell"
-                    confidence = 0.99
+                elif username and attempt_count >= 3 and pred_label not in ("malware_download", "reverse_shell", "recon"):
+                    pred_label = "credential_spray"
+                    confidence = max(confidence, 0.90)
 
                 mitre_info = MITRE_ATTACK_MAPPING.get(pred_label, {
                     "id": "T1059",

@@ -28,7 +28,6 @@ class HoneypotAuthorizer(DummyAuthorizer):
         from defense.firewall import is_ip_blocked
         if is_ip_blocked(source_ip):
             print(f"[FTP/FIREWALL] Connection rejected for blacklisted IP {source_ip}")
-            from pyftpdlib.authorizers import AuthenticationFailed
             raise AuthenticationFailed("Access denied by firewall.")
 
         print(f"[FTP] Login attempt from {source_ip} with username '{username}' and password '{password}'")

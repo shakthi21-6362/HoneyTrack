@@ -13,7 +13,7 @@ import random
 import time
 import threading
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from config.settings import (
     DEMO_MIN_INTERVAL,
@@ -222,7 +222,7 @@ def generate_demo_event():
     risk_score = _score_demo(attack_type, username, password, command, is_tor)
 
     event_data = {
-        "timestamp":   datetime.utcnow(),
+        "timestamp":   datetime.now(timezone.utc),
         "source_ip":   ip_info["source_ip"],
         "service":     service,
         "username":    username,
@@ -399,13 +399,24 @@ def _demo_loop():
 
 
 if __name__ == "__main__":
+    import config.settings as settings
+    settings.IS_DEMO_MODE = True
+
     from database.database import init_db
     init_db()
-    print("[DEMO] Starting standalone demo mode...")
+
+    print("\n" + "=" * 60)
+    print("  [+] HoneyTrack - Standalone Simulation & Demo Mode")
+    print(f"  [+] Web Dashboard: http://localhost:{settings.DASHBOARD_PORT}")
+    print("  [*] Simulated attacks streaming live into dashboard...")
+    print("=" * 60 + "\n")
+
+    seed_demo_session_replays()
     start_demo_mode()
+
     try:
-        while True:
-            time.sleep(1)
+        from api.app import start_dashboard
+        start_dashboard(host=settings.DASHBOARD_HOST, port=settings.DASHBOARD_PORT)
     except KeyboardInterrupt:
         stop_demo_mode()
-        print("[DEMO] Stopped.")
+        print("\n[DEMO] Stopped.")

@@ -7,8 +7,14 @@ honeytrack.db
 !.env.example
 ssh_host_key
 ssh_host_key*
+ssh_keys/
+data/
 *.pem
 *.key
 *.log
 test_report.pdf
 hackerone_threat_advisory.pdf
+.pytest_cache/
+*.db
+.agents/
+.archify/

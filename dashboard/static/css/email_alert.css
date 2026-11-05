@@ -1,0 +1,86 @@
+/* HoneyTrack alert email
+   Table-based layout, no flexbox/grid/CSS variables, so it survives email clients.
+   Before sending through SMTP, inline this file into the HTML (for example with premailer). */
+
+body {
+  margin: 0;
+  padding: 32px 16px;
+  background: #070a12;
+  color: #e4e8f0;
+  font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-text-size-adjust: 100%;
+}
+
+table { border-collapse: collapse; border-spacing: 0; }
+td { padding: 0; vertical-align: top; }
+a { color: #4cc2ff; }
+p { margin: 0 0 14px; }
+
+.outer { width: 100%; background: #070a12; }
+.wrap { width: 100%; max-width: 640px; margin: 0 auto; }
+.card { background: #0d1320; border: 1px solid #1d2638; border-radius: 10px; }
+
+.preheader { display: none; max-height: 0; overflow: hidden; opacity: 0; font-size: 1px; line-height: 1px; color: #070a12; }
+
+/* top bar */
+.bar td { padding: 18px 36px; border-bottom: 1px solid #1d2638; }
+.brand { font-weight: 700; font-size: 16px; color: #ffffff; vertical-align: middle; }
+.brand-icon { display: block; width: 28px; height: 35px; border: 0; outline: none; text-decoration: none; vertical-align: middle; }
+.when { font-size: 12.5px; color: #8a96ab; text-align: right; }
+
+/* sections */
+.pad { padding: 28px 36px; }
+.pad-tight { padding: 28px 36px 4px 36px; }
+.pad-cta { padding: 8px 36px 34px 36px; text-align: center; }
+.pad-sign { padding: 0 36px 30px 36px; }
+.divider { border-top: 1px solid #1d2638; font-size: 0; line-height: 0; height: 0; }
+
+h1 { margin: 0; font-size: 28px; line-height: 1.2; font-weight: 700; color: #ffffff; }
+h2 { margin: 0 0 12px; font-size: 18px; line-height: 1.3; font-weight: 700; color: #ffffff; }
+
+.lead { color: #cfd6e3; }
+.muted { color: #8a96ab; font-size: 14px; }
+.small { font-size: 13px; }
+.note { margin: 12px 0 0 0; }
+.strong { color: #ffffff; font-weight: 700; }
+
+.why { background: #0a0f1a; border: 1px solid #1d2638; border-radius: 8px; padding: 14px 16px; font-size: 14px; color: #aab4c6; }
+
+/* details table */
+.details { width: 100%; border: 1px solid #1d2638; border-radius: 8px; }
+.details td { padding: 11px 16px; border-bottom: 1px solid #172033; font-size: 14px; }
+.details .last td { border-bottom: 0; }
+.k { width: 150px; color: #8a96ab; }
+.v { color: #ffffff; font-weight: 600; word-break: break-word; }
+.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Courier New", monospace; }
+.cyan { color: #4cc2ff; }
+.red { color: #ff7a78; }
+.tor { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 4px; background: #231a3d; border: 1px solid #5b44a8; color: #c4b5fd; font-size: 11px; font-weight: 700; }
+
+/* code blocks */
+.code { margin: 0; padding: 14px 16px; background: #070b13; border: 1px solid #1d2638; border-radius: 8px; font-size: 13px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+.cmt { color: #6b778c; }
+.prompt { color: #f0615f; }
+.cmd { color: #ffffff; }
+.fw { color: #a3e635; }
+
+/* button */
+.btn { display: inline-block; background: #dc2626; color: #ffffff; text-decoration: none; font-weight: 700; font-size: 15px; padding: 14px 28px; border-radius: 8px; }
+.btn:hover { background: #ef3b3b; }
+
+.sign { margin: 0; color: #cfd6e3; }
+.foot td { padding: 18px 36px; border-top: 1px solid #1d2638; background: #0a0f1a; font-size: 12.5px; color: #6f7b90; text-align: center; border-radius: 0 0 10px 10px; }
+
+/* phones */
+@media only screen and (max-width: 520px) {
+  body { padding: 16px 10px; }
+  .bar td, .pad, .pad-tight, .pad-cta, .pad-sign, .foot td { padding-left: 20px !important; padding-right: 20px !important; }
+  .bar td { display: block; text-align: left; }
+  h1 { font-size: 23px; }
+  .details td { display: block; width: auto !important; border-bottom: 0; padding: 4px 16px; }
+  .details .k { padding-top: 12px; font-size: 12.5px; }
+  .details .v { padding-bottom: 12px; border-bottom: 1px solid #172033; }
+  .details .last .v { border-bottom: 0; }
+}

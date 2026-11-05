@@ -29,7 +29,8 @@ def _load_env_file(filepath):
 
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    if not os.environ.get("ENV_FILE"):
+        load_dotenv()
 except ImportError:
     pass
 
@@ -38,7 +39,7 @@ except ImportError:
 # ──────────────────────────────────────────────
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_env_file = os.path.join(BASE_DIR, ".env")
+_env_file = os.environ.get("ENV_FILE", os.path.join(BASE_DIR, ".env"))
 if os.path.exists(_env_file):
     try:
         from dotenv import load_dotenv
@@ -47,9 +48,41 @@ if os.path.exists(_env_file):
         pass
     _load_env_file(_env_file)
 
-DATABASE_PATH = os.path.join(BASE_DIR, "honeytrack.db")
-DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
-SSH_HOST_KEY_PATH = os.path.join(BASE_DIR, "ssh_host_key")
+# Database path — defaults to honeytrack.db in root project directory
+_default_db = os.path.join(BASE_DIR, "honeytrack.db")
+DATABASE_PATH = os.environ.get("DATABASE_PATH", _default_db)
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    # If explicit POSTGRES_* environment variables are set, assemble Postgres connection URI
+    pg_host = os.environ.get("POSTGRES_HOST")
+    if pg_host:
+        pg_port = os.environ.get("POSTGRES_PORT", "5432")
+        pg_user = os.environ.get("POSTGRES_USER", "postgres")
+        pg_pass = os.environ.get("POSTGRES_PASSWORD", "postgres")
+        pg_db = os.environ.get("POSTGRES_DB", "honeytrack")
+        DATABASE_URL = f"postgresql+psycopg://{pg_user}:{pg_pass}@{pg_host}:{pg_port}/{pg_db}"
+    else:
+        DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
+elif DATABASE_URL.startswith("postgres://"):
+    # Fix standard Heroku / Cloud legacy prefix for SQLAlchemy compatibility
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
+elif DATABASE_URL.startswith("postgresql://") and not DATABASE_URL.startswith("postgresql+"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
+
+IS_POSTGRES = DATABASE_URL.startswith("postgresql")
+SSH_HOST_KEY_PATH = os.environ.get("SSH_HOST_KEY_PATH", os.path.join(BASE_DIR, "ssh_keys", "ssh_host_key"))
+_ssh_dir = os.path.dirname(SSH_HOST_KEY_PATH)
+if _ssh_dir and not os.path.exists(_ssh_dir):
+    try:
+        os.makedirs(_ssh_dir, exist_ok=True)
+    except Exception:
+        pass
+
+# Data directory for persistent Docker volumes
+DATA_DIR = os.environ.get("DATA_DIR", BASE_DIR)
+
+# Dashboard URL for email links
+DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "http://localhost:5000")
 
 # Cryptographic Session Key
 SECRET_KEY = os.environ.get("SECRET_KEY")
@@ -60,21 +93,21 @@ if not SECRET_KEY:
 # Honeypot Listener Ports
 # ──────────────────────────────────────────────
 
-SSH_HOST = "0.0.0.0"
-SSH_PORT = 2222
+SSH_HOST = os.environ.get("SSH_HOST", "0.0.0.0")
+SSH_PORT = int(os.environ.get("SSH_PORT", "2222"))
 
-HTTP_HOST = "0.0.0.0"
-HTTP_PORT = 8080
+HTTP_HOST = os.environ.get("HTTP_HOST", "0.0.0.0")
+HTTP_PORT = int(os.environ.get("HTTP_PORT", "8080"))
 
-FTP_HOST = "0.0.0.0"
-FTP_PORT = 2121
+FTP_HOST = os.environ.get("FTP_HOST", "0.0.0.0")
+FTP_PORT = int(os.environ.get("FTP_PORT", "2121"))
 
 # ──────────────────────────────────────────────
 # Dashboard / API
 # ──────────────────────────────────────────────
 
-DASHBOARD_HOST = "0.0.0.0"
-DASHBOARD_PORT = 5000
+DASHBOARD_HOST = os.environ.get("DASHBOARD_HOST", "0.0.0.0")
+DASHBOARD_PORT = int(os.environ.get("DASHBOARD_PORT", "5000"))
 API_POLL_INTERVAL_MS = 3000  # Frontend polling interval
 API_DEFAULT_EVENT_LIMIT = 200
 IS_DEMO_MODE = False

@@ -168,7 +168,7 @@ def create_sample_replay(
         "Welcome to Ubuntu 22.04.3 LTS (GNU/Linux 5.15.0-91-generic x86_64)\r\n\r\n"
         " * Documentation:  https://help.ubuntu.com\r\n"
         " * Management:     https://landscape.canonical.com\r\n\r\n"
-        f"Last login: {datetime.utcnow().strftime('%a %b %d %H:%M:%S %Y')} from {ip}\r\n"
+        f"Last login: {datetime.now(timezone.utc).strftime('%a %b %d %H:%M:%S %Y')} from {ip}\r\n"
     )
     events.append([round(current_time, 2), "o", motd])
     current_time += 0.5
@@ -222,3 +222,4 @@ def create_sample_replay(
         db.close()
 
     return session_id
+

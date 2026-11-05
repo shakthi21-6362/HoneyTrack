@@ -1,8 +1,7 @@
 from .risk import calculate_risk_score, get_risk_level
-from .classifier import classify_attack
 from .geolocation import get_geolocation
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from config import settings
 from alerts.email_alerts import send_alert_email
 
@@ -83,7 +82,7 @@ def analyze_event(
             "service": service,
             "username": username,
             "password": password,
-            "timestamp": datetime.utcnow().isoformat() + "Z"
+            "timestamp": datetime.now(timezone.utc).isoformat()
         })
         threading.Thread(target=send_alert_email, args=(alert_data,), daemon=True).start()
 
